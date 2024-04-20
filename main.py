@@ -5,6 +5,8 @@ from langchain.text_splitter import CharacterTextSplitter
 from langchain.vectorstores import FAISS
 from langchain.embeddings import OpenAIEmbeddings
 from langchain.chains import RetrievalQA
+from langchain.tools import PythonREPLTool
+import json
 
 # Initialize the OpenAI API
 llm = OpenAI(api_key="YOUR_API_KEY")
@@ -78,8 +80,10 @@ pptx_code_tool = Tool(
     description="Generates Python code using python-pptx to create a PowerPoint presentation based on the bullet points."
 )
 
+python_repl_tool = PythonREPLTool()
+
 # Create the zero-shot agent
-tools = [bullet_points_tool, pptx_code_tool]
+tools = [bullet_points_tool, pptx_code_tool, python_repl_tool]
 agent = ZeroShotAgent(llm=llm, tools=tools)
 
 # Prompt the user for input file
@@ -99,5 +103,17 @@ user_input = loader.load_and_split()[0].page_content
 # Run the agent with the user input
 output = agent.run(user_input)
 
-# Print the generated Python code
-print(output)
+# Parse the JSON output from the first tool
+json_output = json.loads(output)
+
+# Generate the Python code using the second tool
+python_code = generate_pptx_code(json.dumps(json_output))
+
+# Run the generated Python code using the PythonREPLTool
+result = python_repl_tool.run(python_code)
+
+# Save the generated PowerPoint presentation
+with open("generated_presentation.pptx", "wb") as file:
+    file.write(result)
+
+print("PowerPoint presentation generated successfully!")
