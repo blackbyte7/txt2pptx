@@ -1,3 +1,4 @@
+import gradio as gr
 from langchain.agents import ZeroShotAgent, Tool
 from langchain.llms import OpenAI
 from langchain.document_loaders import PyPDFLoader, TextLoader
@@ -86,34 +87,47 @@ python_repl_tool = PythonREPLTool()
 tools = [bullet_points_tool, pptx_code_tool, python_repl_tool]
 agent = ZeroShotAgent(llm=llm, tools=tools)
 
-# Prompt the user for input file
-input_file = input("Enter the path to the input file (txt, pdf, etc.): ")
 
-# Load the input file
-if input_file.endswith(".pdf"):
-    loader = PyPDFLoader(input_file)
-elif input_file.endswith(".txt"):
-    loader = TextLoader(input_file)
-else:
-    print("Unsupported file format. Please provide a txt or pdf file.")
-    exit(1)
+# Define the Gradio interface
+def generate_presentation(input_file):
+    # Load the input file
+    if input_file.name.endswith(".pdf"):
+        loader = PyPDFLoader(input_file.name)
+    elif input_file.name.endswith(".txt"):
+        loader = TextLoader(input_file.name)
+    else:
+        return "Unsupported file format. Please provide a txt or pdf file."
 
-user_input = loader.load_and_split()[0].page_content
+    user_input = loader.load_and_split()[0].page_content
 
-# Run the agent with the user input
-output = agent.run(user_input)
+    # Run the agent with the user input
+    output = agent.run(user_input)
 
-# Parse the JSON output from the first tool
-json_output = json.loads(output)
+    # Parse the JSON output from the first tool
+    json_output = json.loads(output)
 
-# Generate the Python code using the second tool
-python_code = generate_pptx_code(json.dumps(json_output))
+    # Generate the Python code using the second tool
+    python_code = generate_pptx_code(json.dumps(json_output))
 
-# Run the generated Python code using the PythonREPLTool
-result = python_repl_tool.run(python_code)
+    # Run the generated Python code using the PythonREPLTool
+    result = python_repl_tool.run(python_code)
 
-# Save the generated PowerPoint presentation
-with open("generated_presentation.pptx", "wb") as file:
-    file.write(result)
+    # Save the generated PowerPoint presentation
+    output_file = "generated_presentation.pptx"
+    with open(output_file, "wb") as file:
+        file.write(result)
 
-print("PowerPoint presentation generated successfully!")
+    return output_file
+
+
+# Create the Gradio interface
+iface = gr.Interface(
+    fn=generate_presentation,
+    inputs=gr.File(label="Input File"),
+    outputs=gr.File(label="Generated Presentation"),
+    title="Text to PowerPoint Converter",
+    description="Upload a text or PDF file and generate a PowerPoint presentation based on the content.",
+)
+
+# Launch the Gradio interface
+iface.launch()
