@@ -9,7 +9,7 @@ def load_documentation(file_path):
     return documents
 
 
-def generate_presentation(input_file, agent, generate_pptx_code):
+def generate_presentation(input_file, style, agent, generate_pptx_code):
     # Load the input file
     if input_file.name.endswith(".pdf"):
         loader = PyPDFLoader(input_file.name)
@@ -20,8 +20,8 @@ def generate_presentation(input_file, agent, generate_pptx_code):
 
     user_input = loader.load_and_split()[0].page_content
 
-    # Run the agent with the user input
-    output = agent.run(user_input)
+    # Run the agent with the user input and selected style
+    output = agent.run(user_input, style)
 
     # Parse the JSON output from the first tool
     json_output = json.loads(output)

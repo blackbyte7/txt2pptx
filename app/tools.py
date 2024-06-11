@@ -6,11 +6,12 @@ from langchain.text_splitter import CharacterTextSplitter
 from langchain.llms import OpenAI
 
 
-def create_bullet_points_tool(llm):
-    def create_bullet_points(user_input):
+def create_bullet_points_tool(llm, style_params):
+    def create_bullet_points(user_input, style):
         prompt = f"""
         Create bullet points from the following text and organize them into pages of a presentation.
-        Also, decide on the design and effects for each slide.
+        Also, decide on the design and effects for each slide based on the chosen style: {style}.
+        Choose appropriate style parameters from the following list: {', '.join(style_params)}.
         Return the output in JSON format, using the following structure:
         {{
             "pages": [
@@ -22,7 +23,8 @@ def create_bullet_points_tool(llm):
                         ...
                     ],
                     "design": "Design description",
-                    "effects": "Effects description"
+                    "effects": "Effects description",
+                    "style_params": ["Chosen style parameter 1", "Chosen style parameter 2", ...]
                 }},
                 ...
             ]
@@ -37,7 +39,8 @@ def create_bullet_points_tool(llm):
     tool = Tool(
         name="Create Bullet Points",
         func=create_bullet_points,
-        description="Creates bullet points from the user input, organizes them into pages of a presentation, and decides on the design and effects for each slide."
+        description="Creates bullet points from the user input, organizes them into pages of a presentation, and "
+                    "decides on the design and effects for each slide based on the chosen style."
     )
     return tool
 
@@ -55,7 +58,8 @@ def create_pptx_code_tool(documents, llm):
     qa = RetrievalQA.from_chain_type(llm=llm, chain_type="stuff", retriever=vectorstore.as_retriever())
 
     def generate_pptx_code(json_input):
-        prompt = f"Generate Python code using python-pptx to create a PowerPoint presentation based on the following JSON input:\n\n{json_input}"
+        prompt = (f"Generate Python code using python-pptx to create a PowerPoint presentation based on the following "
+                  f"JSON input:\n\n{json_input}")
 
         # Use the retrieval QA chain to enhance the knowledge about python-pptx
         enhanced_prompt = qa.run(prompt)
@@ -66,6 +70,7 @@ def create_pptx_code_tool(documents, llm):
     tool = Tool(
         name="Generate PPTX Code",
         func=generate_pptx_code,
-        description="Generates Python code using python-pptx to create a PowerPoint presentation based on the bullet points."
+        description="Generates Python code using python-pptx to create a PowerPoint presentation based"
+                    " on the bullet points."
     )
     return tool
