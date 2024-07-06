@@ -1,5 +1,6 @@
 import json
-from langchain.document_loaders import PyPDFLoader, TextLoader
+from langchain.document_loaders import PyPDFLoader, TextLoader, UnstructuredHTMLLoader, UnstructuredWordDocumentLoader, \
+    UnstructuredPowerPointLoader
 from langchain.tools import PythonREPLTool
 
 
@@ -10,13 +11,19 @@ def load_documentation(file_path):
 
 
 def generate_presentation(input_file, style, agent, generate_pptx_code):
-    # Load the input file
+    # Load the input file based on its format
     if input_file.name.endswith(".pdf"):
         loader = PyPDFLoader(input_file.name)
     elif input_file.name.endswith(".txt"):
         loader = TextLoader(input_file.name)
+    elif input_file.name.endswith(".html") or input_file.name.endswith(".htm"):
+        loader = UnstructuredHTMLLoader(input_file.name)
+    elif input_file.name.endswith(".docx"):
+        loader = UnstructuredWordDocumentLoader(input_file.name)
+    elif input_file.name.endswith(".pptx"):
+        loader = UnstructuredPowerPointLoader(input_file.name)
     else:
-        return "Unsupported file format. Please provide a txt or pdf file."
+        return "Unsupported file format. Please provide a file in one of the supported formats: txt, pdf, html, docx, pptx."
 
     user_input = loader.load_and_split()[0].page_content
 
