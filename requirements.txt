@@ -1,0 +1,2 @@
+langchain~=0.1.17
+gradio~=4.29.0
