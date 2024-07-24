@@ -60,5 +60,9 @@ def create_interface(agent, pptx_code_tool):
 
 
 def launch_interface(agent, pptx_code_tool):
-    iface = create_interface(agent, pptx_code_tool)
-    iface.launch()
+    try:
+        iface = create_interface(agent, pptx_code_tool)
+        iface.launch()
+    except Exception as e:
+        print(f"Error launching interface: {str(e)}")
+        raise

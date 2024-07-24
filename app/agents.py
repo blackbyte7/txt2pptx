@@ -3,6 +3,10 @@ from langchain.llms import OpenAI
 
 
 def create_agent(tools):
-    llm = OpenAI(api_key="YOUR_API_KEY")
-    agent = ZeroShotAgent(llm=llm, tools=tools)
-    return agent
+    try:
+        llm = OpenAI(api_key="YOUR_API_KEY")
+        agent = ZeroShotAgent(llm=llm, tools=tools)
+        return agent
+    except Exception as e:
+        print(f"Error creating agent: {str(e)}")
+        raise

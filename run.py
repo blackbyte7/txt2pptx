@@ -6,25 +6,30 @@ from view.gradio_ui import launch_interface
 
 
 def main():
-    # Initialize the OpenAI API
-    llm = OpenAI(api_key="YOUR_API_KEY")
+    try:
+        # Initialize the OpenAI API
+        llm = OpenAI(api_key="YOUR_API_KEY")
 
-    # Define the list of style parameters
-    style_params = ["Bold Colors", "Minimalistic", "Gradient Backgrounds", "Custom Fonts", "Image Placeholders"]
+        # Define the list of style parameters
+        style_params = ["Bold Colors", "Minimalistic", "Gradient Backgrounds", "Custom Fonts", "Image Placeholders"]
 
-    # Load the python-pptx library documentation
-    documents = load_documentation("data/python-pptx-documentation.pdf")
+        # Load the python-pptx library documentation
+        documents = load_documentation("data/python-pptx-documentation.pdf")
 
-    # Create the custom tools
-    bullet_points_tool = create_bullet_points_tool(llm, style_params)
-    pptx_code_tool = create_pptx_code_tool(documents, llm)
+        # Create the custom tools
+        bullet_points_tool = create_bullet_points_tool(llm, style_params)
+        pptx_code_tool = create_pptx_code_tool(documents, llm)
 
-    # Create the zero-shot agent
-    tools = [bullet_points_tool, pptx_code_tool]
-    agent = create_agent(tools)
+        # Create the zero-shot agent
+        tools = [bullet_points_tool, pptx_code_tool]
+        agent = create_agent(tools)
 
-    # Launch the Gradio interface
-    launch_interface(agent, pptx_code_tool)
+        # Launch the Gradio interface
+        launch_interface(agent, pptx_code_tool)
+    except Exception as e:
+        print(f"Error in main function: {str(e)}")
+        raise
+
 
 if __name__ == "__main__":
     main()
