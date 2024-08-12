@@ -50,7 +50,8 @@ def create_bullet_points_tool(llm, style_params):
     tool = Tool(
         name="Create Bullet Points",
         func=create_bullet_points,
-        description="Creates bullet points from the user input, organizes them into pages of a presentation, and decides on the design and effects for each slide based on the chosen style."
+        description="Creates bullet points from the user input, organizes them into pages of a presentation, and"
+                    " decides on the design and effects for each slide based on the chosen style."
     )
     return tool
 
@@ -70,7 +71,8 @@ def create_pptx_code_tool(documents, llm):
 
         def generate_pptx_code(json_input):
             try:
-                prompt = f"Generate Python code using python-pptx to create a PowerPoint presentation based on the following JSON input:\n\n{json_input}"
+                prompt = (f"Generate Python code using python-pptx to create a PowerPoint presentation based on the"
+                          f" following JSON input:\n\n{json_input}")
 
                 # Use the retrieval QA chain to enhance the knowledge about python-pptx
                 enhanced_prompt = qa.run(prompt)
@@ -84,7 +86,8 @@ def create_pptx_code_tool(documents, llm):
         tool = Tool(
             name="Generate PPTX Code",
             func=generate_pptx_code,
-            description="Generates Python code using python-pptx to create a PowerPoint presentation based on the bullet points."
+            description="Generates Python code using python-pptx to create a PowerPoint presentation based on the "
+                        "bullet points."
         )
         return tool
     except Exception as e:

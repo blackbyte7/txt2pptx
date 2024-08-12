@@ -28,7 +28,8 @@ def generate_presentation(input_file, style, agent, generate_pptx_code):
         elif input_file.name.endswith(".pptx"):
             loader = UnstructuredPowerPointLoader(input_file.name)
         else:
-            return "Unsupported file format. Please provide a file in one of the supported formats: txt, pdf, html, docx, pptx."
+            return ("Unsupported file format. Please provide a file in one of the supported formats: "
+                    "txt, pdf, html, docx, pptx.")
 
         user_input = loader.load_and_split()[0].page_content
 

@@ -26,7 +26,8 @@ def create_interface(agent, pptx_code_tool):
         gr.Markdown(
             """
             # Text to PowerPoint Converter
-            Upload a text or PDF file, choose a presentation style, and generate a professional PowerPoint presentation based on the content.
+            Upload a text or PDF file, choose a presentation style, and generate a professional PowerPoint presentation
+             based on the content.
             """
         )
 
