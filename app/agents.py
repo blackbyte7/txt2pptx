@@ -1,5 +1,5 @@
 from langchain.agents import ZeroShotAgent
-from langchain.llms import OpenAI
+from langchain_openai import OpenAI
 
 
 def create_agent(tools):

@@ -1,16 +1,8 @@
 from langchain.tools import Tool
 from langchain.chains import RetrievalQA
-from langchain.vectorstores import FAISS
-from langchain.embeddings import OpenAIEmbeddings
+from langchain_community.vectorstores import FAISS
+from langchain_openai.embeddings import OpenAIEmbeddings
 from langchain.text_splitter import CharacterTextSplitter
-from langchain.llms import OpenAI
-
-from langchain.tools import Tool
-from langchain.chains import RetrievalQA
-from langchain.vectorstores import FAISS
-from langchain.embeddings import OpenAIEmbeddings
-from langchain.text_splitter import CharacterTextSplitter
-from langchain.llms import OpenAI
 
 
 def create_bullet_points_tool(llm, style_params):
