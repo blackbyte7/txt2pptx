@@ -2,7 +2,7 @@ import json
 from langchain_community.document_loaders import (PyPDFLoader, TextLoader, UnstructuredHTMLLoader,
                                                   UnstructuredWordDocumentLoader,
                                                   UnstructuredPowerPointLoader)
-from langchain_experimental.utilities import PythonREPL
+from langchain_experimental.tools.python.tool import PythonREPLTool
 
 
 # from langchain.tools import PythonREPLTool
@@ -47,7 +47,7 @@ def generate_presentation(input_file, style, agent, generate_pptx_code):
         python_code = generate_pptx_code(json.dumps(json_output))
 
         # Run the generated Python code using the PythonREPLTool
-        python_repl_tool = PythonREPL()
+        python_repl_tool = PythonREPLTool()
         result = python_repl_tool.run(python_code)
 
         # Save the generated PowerPoint presentation
