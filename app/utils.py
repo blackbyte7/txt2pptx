@@ -5,9 +5,6 @@ from langchain_community.document_loaders import (PyPDFLoader, TextLoader, Unstr
 from langchain_experimental.tools.python.tool import PythonREPLTool
 
 
-# from langchain.tools import PythonREPLTool
-
-
 def load_documentation(file_path):
     try:
         loader = PyPDFLoader(file_path)

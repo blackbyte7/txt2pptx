@@ -3,9 +3,11 @@ from langchain.chains import RetrievalQA
 from langchain_community.vectorstores import FAISS
 from langchain_openai.embeddings import OpenAIEmbeddings
 from langchain.text_splitter import CharacterTextSplitter
+from langchain_openai import OpenAI
+from langchain_anthropic import Anthropic
 
 
-def create_bullet_points_tool(llm, style_params):
+def create_bullet_points_tool(style_params, llm_provider, api_key):
     def create_bullet_points(user_input, style):
         try:
             prompt = f"""
@@ -33,6 +35,13 @@ def create_bullet_points_tool(llm, style_params):
             Text:
             {user_input}
             """
+            if llm_provider == "OpenAI":
+                llm = OpenAI(api_key=api_key)
+            elif llm_provider == "Anthropic":
+                llm = Anthropic(api_key=api_key)
+            else:
+                raise ValueError(f"Unsupported LLM provider: {llm_provider}")
+
             response = llm(prompt)
             return response
         except Exception as e:
@@ -48,7 +57,7 @@ def create_bullet_points_tool(llm, style_params):
     return tool
 
 
-def create_pptx_code_tool(documents, llm):
+def create_pptx_code_tool(documents, llm_provider, api_key):
     try:
         # Split the documents into chunks
         text_splitter = CharacterTextSplitter(chunk_size=1000, chunk_overlap=0)
@@ -57,6 +66,13 @@ def create_pptx_code_tool(documents, llm):
         # Create a vector store
         embeddings = OpenAIEmbeddings()
         vectorstore = FAISS.from_documents(texts, embeddings)
+
+        if llm_provider == "OpenAI":
+            llm = OpenAI(api_key=api_key)
+        elif llm_provider == "Anthropic":
+            llm = Anthropic(api_key=api_key)
+        else:
+            raise ValueError(f"Unsupported LLM provider: {llm_provider}")
 
         # Create a retrieval QA chain
         qa = RetrievalQA.from_chain_type(llm=llm, chain_type="stuff", retriever=vectorstore.as_retriever())

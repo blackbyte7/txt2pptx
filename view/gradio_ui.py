@@ -1,8 +1,10 @@
 import gradio as gr
+from app.agents import create_agent
+from app.tools import create_bullet_points_tool, create_pptx_code_tool
 from app.utils import generate_presentation
 
 
-def create_interface(agent, pptx_code_tool):
+def create_interface(style_params, documents):
     with gr.Blocks(css="""
         .gradio-container {
             background-color: #f4f4f4;
@@ -39,6 +41,12 @@ def create_interface(agent, pptx_code_tool):
                     label="Presentation Style",
                     value="Default"
                 )
+                llm_provider = gr.Dropdown(
+                    choices=["OpenAI", "Anthropic"],
+                    label="LLM Provider",
+                    value="OpenAI"
+                )
+                api_key = gr.Textbox(label="API Key", type="password")
                 submit_button = gr.Button("Generate Presentation")
 
             with gr.Column():
@@ -46,8 +54,16 @@ def create_interface(agent, pptx_code_tool):
                 download_button = gr.Button("Download Presentation")
 
         submit_button.click(
-            fn=lambda file, selected_style: generate_presentation(file, selected_style, agent, pptx_code_tool.func),
-            inputs=[input_file, style],
+            fn=lambda file, selected_style, selected_llm_provider, entered_api_key: generate_presentation(
+                file, selected_style, create_agent(
+                    [
+                        create_bullet_points_tool(style_params, selected_llm_provider, entered_api_key),
+                        create_pptx_code_tool(documents, selected_llm_provider, entered_api_key)
+                    ],
+                    selected_llm_provider, entered_api_key
+                ), create_pptx_code_tool(documents, selected_llm_provider, entered_api_key).func
+            ),
+            inputs=[input_file, style, llm_provider, api_key],
             outputs=output_file
         )
 
@@ -60,9 +76,9 @@ def create_interface(agent, pptx_code_tool):
     return iface
 
 
-def launch_interface(agent, pptx_code_tool):
+def launch_interface(style_params, documents):
     try:
-        iface = create_interface(agent, pptx_code_tool)
+        iface = create_interface(style_params, documents)
         iface.launch()
     except Exception as e:
         print(f"Error launching interface: {str(e)}")
