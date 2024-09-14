@@ -35,7 +35,7 @@ def create_interface(style_params, documents):
 
         with gr.Row():
             with gr.Column():
-                input_file = gr.File(label="Input File", type="file")
+                input_file = gr.File(label="Input File", type="filepath")
                 style = gr.Dropdown(
                     choices=["Default", "Professional", "Creative", "Playful"],
                     label="Presentation Style",
@@ -50,26 +50,22 @@ def create_interface(style_params, documents):
                 submit_button = gr.Button("Generate Presentation")
 
             with gr.Column():
-                output_file = gr.File(label="Generated Presentation", type="file", interactive=False)
-                download_button = gr.Button("Download Presentation")
+                output_file = gr.File(label="Generated Presentation", type="binary", interactive=False)
+
+        def process_request(file, selected_style, selected_llm_provider, entered_api_key):
+            agent = create_agent(
+                [
+                    create_bullet_points_tool(style_params, selected_llm_provider, entered_api_key),
+                    create_pptx_code_tool(documents, selected_llm_provider, entered_api_key)
+                ],
+                selected_llm_provider, entered_api_key
+            )
+            pptx_code_tool_func = create_pptx_code_tool(documents, selected_llm_provider, entered_api_key).func
+            return generate_presentation(file, selected_style, agent, pptx_code_tool_func)
 
         submit_button.click(
-            fn=lambda file, selected_style, selected_llm_provider, entered_api_key: generate_presentation(
-                file, selected_style, create_agent(
-                    [
-                        create_bullet_points_tool(style_params, selected_llm_provider, entered_api_key),
-                        create_pptx_code_tool(documents, selected_llm_provider, entered_api_key)
-                    ],
-                    selected_llm_provider, entered_api_key
-                ), create_pptx_code_tool(documents, selected_llm_provider, entered_api_key).func
-            ),
+            fn=process_request,
             inputs=[input_file, style, llm_provider, api_key],
-            outputs=output_file
-        )
-
-        download_button.click(
-            fn=lambda file: file.name,
-            inputs=output_file,
             outputs=output_file
         )
 
