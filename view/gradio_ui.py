@@ -35,6 +35,14 @@ def create_interface(style_params, documents):
 
         with gr.Row():
             with gr.Column():
+                template = gr.Dropdown(
+                    choices=["professional", "creative"],
+                    label="Presentation Template",
+                    value="professional"
+                )
+
+        with gr.Row():
+            with gr.Column():
                 input_file = gr.File(label="Input File", type="filepath")
                 style = gr.Dropdown(
                     choices=["Default", "Professional", "Creative", "Playful"],

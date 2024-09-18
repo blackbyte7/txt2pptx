@@ -1,18 +1,18 @@
 from langchain.tools import Tool
 from langchain.chains import RetrievalQA
 from langchain_community.vectorstores import FAISS
-from langchain_openai.embeddings import OpenAIEmbeddings
-from langchain.text_splitter import CharacterTextSplitter
 from langchain_openai import OpenAI
 from langchain_anthropic import Anthropic
 from langchain.prompts import PromptTemplate
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from typing import Dict, List
 import hashlib
-import json
-import os
 from pathlib import Path
+
+from templates.templates import PresentationTemplates
 from .logging_config import logger
+from .rag import EnhancedRAG
+
 
 # Cache directory for vector stores
 CACHE_DIR = Path("cache/vector_stores")
@@ -69,38 +69,6 @@ PPTX_CODE_PROMPT = PromptTemplate(
     """
 )
 
-class VectorStoreManager:
-    def __init__(self, embeddings):
-        self.embeddings = embeddings
-
-    def get_or_create_vector_store(self, documents: List[str]) -> FAISS:
-        # Create a unique hash for the documents
-        content_hash = hashlib.md5(
-            "".join(str(doc) for doc in documents).encode()
-        ).hexdigest()
-
-        cache_file = CACHE_DIR / f"store_{content_hash}.faiss"
-
-        if cache_file.exists():
-            logger.info("Loading vector store from cache")
-            return FAISS.load_local(str(cache_file), self.embeddings)
-
-        logger.info("Creating new vector store")
-        text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=500,
-            chunk_overlap=50,
-            separators=["\n\n", "\n", ".", "!", "?", ",", " ", ""],
-            length_function=len,
-        )
-
-        texts = text_splitter.split_documents(documents)
-        vector_store = FAISS.from_documents(texts, self.embeddings)
-
-        # Save to cache
-        vector_store.save_local(str(cache_file))
-        return vector_store
-
-
 def create_bullet_points_tool(style_params, llm_provider, api_key):
     def create_bullet_points(user_input, style):
         try:
@@ -136,9 +104,9 @@ def create_bullet_points_tool(style_params, llm_provider, api_key):
 
 def create_pptx_code_tool(documents, llm_provider, api_key):
     try:
-        embeddings = OpenAIEmbeddings()
-        vector_store_manager = VectorStoreManager(embeddings)
-        vector_store = vector_store_manager.get_or_create_vector_store(documents)
+        rag = EnhancedRAG()
+        vector_store = rag.create_vector_store(documents, "pptx_docs")
+        templates = PresentationTemplates()
 
         if llm_provider == "OpenAI":
             llm = OpenAI(api_key=api_key)
@@ -160,14 +128,20 @@ def create_pptx_code_tool(documents, llm_provider, api_key):
             try:
                 logger.info("Generating PPTX code")
 
+                # Get template information
+                template_name = json_input.get("style", "professional")
+                template = templates.get_template(template_name)
+
                 # Get relevant documentation context
-                context = qa_chain.run(
-                    "What are the key python-pptx functions and methods needed for creating slides?"
+                context = rag.get_relevant_context(
+                    vector_store,
+                    "How to create slides with specific layouts and styling in python-pptx?"
                 )
 
                 prompt = PPTX_CODE_PROMPT.format(
                     json_input=json_input,
-                    context=context
+                    context=context,
+                    template=template
                 )
 
                 response = llm(prompt)
