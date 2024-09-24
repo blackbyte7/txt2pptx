@@ -1,6 +1,7 @@
 from typing import Dict, List
 import json
 from pathlib import Path
+import time
 
 
 class PresentationTemplates:
@@ -43,3 +44,27 @@ class PresentationTemplates:
         template_file = self.templates_dir / f"{name}.json"
         with open(template_file, 'w') as f:
             json.dump(template, f, indent=4)
+
+
+def customize_template(self, name: str, modifications: Dict) -> Dict:
+    """Allows users to customize existing templates."""
+    template = self.get_template(name)
+    for key, value in modifications.items():
+        if key in template:
+            template[key] = value
+
+    # Save the modified template with a new name
+    new_name = f"{name}_custom_{int(time.time())}"
+    self.add_template(new_name, template)
+    return template
+
+
+def get_template_preview(self, name: str) -> Dict:
+    """Returns a preview of the template settings."""
+    template = self.get_template(name)
+    return {
+        "color_scheme": template["colors"][:3],
+        "font": template["font"],
+        "sample_layouts": template["slide_layouts"][:2],
+        "transition_examples": template["transitions"][:2]
+    }
