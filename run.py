@@ -1,7 +1,4 @@
-# run.py
-from app.agents import create_agent
-from app.tools import create_bullet_points_tool, create_pptx_code_tool
-from app.utils import load_documentation, generate_presentation
+from app.utils import load_documentation
 from view.gradio_ui import launch_interface
 
 

@@ -1,17 +1,13 @@
 import ast
-from langchain.tools import Tool
 from langchain.chains import RetrievalQA
-from langchain_community.vectorstores import FAISS
 from langchain_openai import OpenAI
 from langchain_anthropic import Anthropic
 from langchain.prompts import PromptTemplate
 from langchain.schema import Document
-from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.tools import StructuredTool
 from pydantic import BaseModel
 from typing import Optional
 from typing import Dict, List, Any
-import hashlib
 from pathlib import Path
 
 
