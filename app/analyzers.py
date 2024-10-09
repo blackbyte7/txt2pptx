@@ -1,5 +1,6 @@
 from typing import Dict
 
+
 class ContentAnalyzer:
     def __init__(self):
         self.max_bullets_per_slide = 7

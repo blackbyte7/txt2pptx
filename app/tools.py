@@ -9,10 +9,8 @@ from pydantic import BaseModel
 from typing import Optional
 from typing import Dict, List, Any
 from pathlib import Path
-
-
 from templates.templates import PresentationTemplates
-from .logging_config import logger
+from logging.logging_config import logger
 from .rag import EnhancedRAG
 
 # Cache directory for vector stores

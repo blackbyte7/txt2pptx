@@ -5,7 +5,7 @@ from langchain.chains import RetrievalQA
 from typing import List
 import pickle
 from pathlib import Path
-from .logging_config import logger
+from logging.logging_config import logger
 
 
 class EnhancedRAG:

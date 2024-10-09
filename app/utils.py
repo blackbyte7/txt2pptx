@@ -6,7 +6,7 @@ from langchain_experimental.tools.python.tool import PythonREPLTool
 from typing import Any
 import time
 from pathlib import Path
-from .logging_config import logger
+from logging.logging_config import logger
 
 
 def load_documentation(file_path):

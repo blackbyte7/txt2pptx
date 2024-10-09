@@ -83,7 +83,7 @@ def create_agent(llm_provider: str, api_key: str, rag_system: Any) -> Presentati
         raise ValueError(f"Unsupported LLM provider: {llm_provider}")
 
     tools = [
-        create_bullet_points_tool(llm),
+        create_bullet_points_tool(llm, llm_provider, api_key),
         create_pptx_code_tool(llm, rag_system),
         create_quality_check_tool(llm)
     ]
