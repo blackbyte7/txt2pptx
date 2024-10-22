@@ -3,12 +3,13 @@ import sys
 from pathlib import Path
 
 
-def setup_logging():
+def setup_logging() -> logging.Logger:
+    """Sets up the application logging configuration."""
     # Create logs directory if it doesn't exist
-    Path("logs").mkdir(exist_ok=True)
+    Path("logs").mkdir(parents=True, exist_ok=True)
 
     # Configure logging
-    logging.basicConfig(
+    logging.basicConfig(  # Use logging.basicConfig, NOT log_config.basicConfig
         level=logging.INFO,
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         handlers=[
@@ -19,4 +20,4 @@ def setup_logging():
     return logging.getLogger(__name__)
 
 
-logger = setup_logging()
+logger: logging.Logger = setup_logging()

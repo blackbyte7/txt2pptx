@@ -8,7 +8,7 @@ import tempfile
 from typing import Optional
 import win32com.client
 import comtypes.client
-from logging.logging_config import logger
+from log_config.logging_config import logger
 
 
 class PresentationExporter:
