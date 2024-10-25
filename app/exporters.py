@@ -1,196 +1,323 @@
-from typing import Dict, List
-import pptx
-import pdf2image
 import platform
 import subprocess
-from pathlib import Path
 import tempfile
-from typing import Optional
-import win32com.client
-import comtypes.client
+from pathlib import Path
+from typing import Dict, List, Optional, Union
+import pdf2image
+import pptx
 from log_config.logging_config import logger
+
+# Conditional imports for Windows COM
+if platform.system() == "Windows":
+    try:
+        import win32com.client
+        import comtypes.client
+
+        HAS_WIN_COM = True
+    except ImportError:
+        logger.warning("Windows COM libraries (pywin32, comtypes) not found. PDF export on Windows will be disabled.")
+        HAS_WIN_COM = False
+else:
+    HAS_WIN_COM = False
 
 
 class PresentationExporter:
-    def __init__(self, output_dir: str = "exports"):
+    def __init__(self, output_dir: Union[str, Path] = "exports"):
         self.output_dir = Path(output_dir)
-        self.output_dir.mkdir(exist_ok=True)
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        self._check_dependencies()
+
+    def _check_dependencies(self):
+        """Checks for necessary external dependencies."""
+        if platform.system() != "Windows":
+            if not self._is_tool_installed("unoconv") and not self._is_tool_installed("soffice"):
+                logger.warning(
+                    "Neither 'unoconv' nor 'soffice' (LibreOffice) found in PATH. PDF export on Unix-like systems may fail.")
+        try:
+            import pdf2image
+        except ImportError:
+            logger.warning(
+                "'pdf2image' library not found. Image export will be disabled. Install with 'pip install pdf2image'.")
+        try:
+            pdf2image.pdfinfo_from_path
+        except pdf2image.exceptions.PDFInfoNotInstalledError:
+            logger.warning(
+                "'poppler' utility not found or not in PATH. Image export will be disabled. Install poppler for your OS.")
+
+    def _is_tool_installed(self, name: str) -> bool:
+        """Check if a command-line tool is installed and in PATH."""
+        try:
+            subprocess.run([name, '--version'], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+            return True
+        except (FileNotFoundError, subprocess.CalledProcessError):
+            return False
 
     def export_presentation(self,
-                            pptx_path: str,
+                            pptx_path: Union[str, Path],
                             formats: List[str] = ["pdf", "html", "images"],
-                            output_name: Optional[str] = None) -> Dict[str, str]:
+                            output_name: Optional[str] = None) -> Dict[str, Union[str, List[str], Dict]]:
         """Exports the presentation to multiple formats."""
-        if not output_name:
-            output_name = Path(pptx_path).stem
+        pptx_path = Path(pptx_path)
+        if not pptx_path.exists():
+            logger.error(f"Input PPTX file not found: {pptx_path}")
+            return {"error": f"Input PPTX file not found: {pptx_path}"}
 
-        results = {
-            "original": pptx_path,
+        if not output_name:
+            output_name = pptx_path.stem
+
+        results: Dict[str, Union[str, List[str], Dict]] = {
+            "original": str(pptx_path),
             "exports": {}
         }
+        export_details: Dict[str, Union[str, List[str]]] = {}
 
         for format_type in formats:
             try:
                 if format_type == "pdf":
                     pdf_path = self._export_to_pdf(pptx_path, output_name)
-                    results["exports"]["pdf"] = pdf_path
-
+                    if pdf_path:
+                        export_details["pdf"] = pdf_path
                 elif format_type == "html":
                     html_path = self._export_to_html(pptx_path, output_name)
-                    results["exports"]["html"] = html_path
-
+                    if html_path:
+                        export_details["html"] = html_path
                 elif format_type == "images":
-                    image_paths = self._export_to_images(pptx_path, output_name)
-                    results["exports"]["images"] = image_paths
+                    # Requires PDF conversion first
+                    pdf_for_images = export_details.get("pdf")
+                    if not pdf_for_images:
+                        logger.info("Generating temporary PDF for image export.")
+                        pdf_for_images = self._export_to_pdf(pptx_path, f"{output_name}_temp_for_images")
+
+                    if pdf_for_images:
+                        image_paths = self._export_to_images(pdf_for_images, output_name)
+                        if image_paths:
+                            export_details["images"] = image_paths
+                        if "temp_for_images" in str(pdf_for_images):
+                            Path(pdf_for_images).unlink(missing_ok=True)
+                    else:
+                        raise RuntimeError("Could not generate PDF needed for image export.")
 
             except Exception as e:
-                results["exports"][format_type] = f"Export failed: {str(e)}"
+                logger.error(f"Export to {format_type} failed: {e}", exc_info=True)
+                export_details[format_type] = f"Export failed: {e}"
 
+        results["exports"] = export_details
         return results
 
-    def _export_to_pdf(self, pptx_path: str, output_name: str) -> str:
-        """
-        Export PowerPoint presentation to PDF using platform-specific methods.
-
-        Args:
-            pptx_path (str): Path to the input PPTX file
-            output_name (str): Desired name for the output PDF file
-
-        Returns:
-            str: Path to the generated PDF file
-        """
+    def _export_to_pdf(self, pptx_path: Path, output_name: str) -> Optional[str]:
+        """Exports PowerPoint to PDF using platform-specific methods."""
         output_path = self.output_dir / f"{output_name}.pdf"
+        logger.info(f"Attempting PDF export: {pptx_path} -> {output_path}")
 
         try:
-            if platform.system() == "Windows":
+            if platform.system() == "Windows" and HAS_WIN_COM:
                 return self._export_to_pdf_windows(pptx_path, output_path)
-            else:
+            elif platform.system() != "Windows":
                 return self._export_to_pdf_unix(pptx_path, output_path)
-
+            else:
+                logger.warning("PDF export skipped: Unsupported platform or missing dependencies.")
+                return None
         except Exception as e:
-            logger.error(f"PDF export failed: {str(e)}")
-            raise
+            logger.error(f"PDF export failed: {e}", exc_info=True)
+            output_path.unlink(missing_ok=True)
+            return None
 
-    def _export_to_pdf_windows(self, pptx_path: str, output_path: Path) -> str:
+    def _export_to_pdf_windows(self, pptx_path: Path, output_path: Path) -> Optional[str]:
         """Windows-specific PDF export using COM automation."""
+        if not HAS_WIN_COM:
+            logger.error("Cannot export PDF on Windows: pywin32 or comtypes not installed.")
+            return None
+
+        powerpoint = None
+        deck = None
         try:
-            # Try using comtypes first
+            abs_pptx_path = str(pptx_path.absolute())
+            abs_output_path = str(output_path.absolute())
+            logger.info("Using comtypes for PDF export...")
             powerpoint = comtypes.client.CreateObject("Powerpoint.Application")
-            powerpoint.Visible = True
+            powerpoint.DisplayAlerts = 0
 
-            deck = powerpoint.Presentations.Open(str(Path(pptx_path).absolute()))
-            deck.SaveAs(str(output_path.absolute()), 32)  # 32 is the PDF format code
-            deck.Close()
-            powerpoint.Quit()
-
+            deck = powerpoint.Presentations.Open(abs_pptx_path, WithWindow=False)
+            deck.SaveAs(abs_output_path, 32)
+            logger.info(f"Successfully exported PDF using comtypes: {output_path}")
             return str(output_path)
 
-        except Exception as first_error:
-            logger.warning(f"Comtypes export failed, trying win32com: {str(first_error)}")
-
+        except Exception as com_error:
+            logger.warning(f"Comtypes PDF export failed: {com_error}. Trying win32com...")
             try:
-                # Fallback to win32com
+                logger.info("Using win32com for PDF export...")
                 powerpoint = win32com.client.Dispatch("Powerpoint.Application")
-                powerpoint.Visible = True
+                powerpoint.DisplayAlerts = 0
 
-                deck = powerpoint.Presentations.Open(str(Path(pptx_path).absolute()))
-                deck.SaveAs(str(output_path.absolute()), 32)
-                deck.Close()
-                powerpoint.Quit()
-
+                deck = powerpoint.Presentations.Open(abs_pptx_path, WithWindow=False)
+                deck.SaveAs(abs_output_path, 32)  # 32 is ppSaveAsPDF
+                logger.info(f"Successfully exported PDF using win32com: {output_path}")
                 return str(output_path)
 
-            except Exception as second_error:
-                logger.error(f"Both PDF export methods failed on Windows: {str(second_error)}")
-                raise
+            except Exception as win32_error:
+                logger.error(f"Both comtypes and win32com PDF export methods failed on Windows: {win32_error}",
+                             exc_info=True)
+                return None
+        finally:
+            try:
+                if deck:
+                    deck.Close()
+                    logger.debug("Closed PowerPoint presentation object.")
+            except Exception as close_err:
+                logger.warning(f"Error closing PowerPoint presentation: {close_err}")
+            try:
+                if powerpoint:
+                    powerpoint.Quit()
+                    logger.debug("Quit PowerPoint application object.")
+            except Exception as quit_err:
+                logger.warning(f"Error quitting PowerPoint application: {quit_err}")
+            if platform.system() == "Windows" and HAS_WIN_COM:
+                import gc
+                gc.collect()
 
-    def _export_to_pdf_unix(self, pptx_path: str, output_path: Path) -> str:
+    def _export_to_pdf_unix(self, pptx_path: Path, output_path: Path) -> Optional[str]:
         """Unix-specific PDF export using LibreOffice/unoconv."""
+        abs_pptx_path = str(pptx_path.absolute())
+        abs_output_dir = str(self.output_dir.absolute())
+        output_filename = output_path.name
+
         try:
-            # Check if unoconv is installed
-            if self._check_unoconv_installed():
-                # Convert using unoconv
-                subprocess.run([
-                    'unoconv',
-                    '-f', 'pdf',
-                    '-o', str(output_path),
-                    str(pptx_path)
-                ], check=True)
-
-                return str(output_path)
-
-            # Fallback to soffice (LibreOffice) if unoconv is not available
-            with tempfile.TemporaryDirectory() as temp_dir:
-                subprocess.run([
-                    'soffice',
-                    '--headless',
-                    '--convert-to', 'pdf',
-                    '--outdir', temp_dir,
-                    str(pptx_path)
-                ], check=True)
-
-                # Move the generated PDF to the desired location
-                temp_pdf = Path(temp_dir) / f"{Path(pptx_path).stem}.pdf"
-                if temp_pdf.exists():
-                    temp_pdf.rename(output_path)
+            if self._is_tool_installed("unoconv"):
+                logger.info("Using unoconv for PDF export...")
+                cmd = ['unoconv', '-f', 'pdf', '-o', str(output_path), abs_pptx_path]
+                process = subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=120)
+                logger.debug(f"unoconv stdout: {process.stdout}")
+                logger.debug(f"unoconv stderr: {process.stderr}")
+                if output_path.exists():
+                    logger.info(f"Successfully exported PDF using unoconv: {output_path}")
                     return str(output_path)
                 else:
-                    raise FileNotFoundError("PDF conversion failed")
+                    raise FileNotFoundError(f"unoconv finished but output PDF not found: {output_path}")
 
+            elif self._is_tool_installed("soffice"):
+                logger.info("Using soffice (LibreOffice) for PDF export...")
+
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    cmd = [
+                        'soffice', '--headless', '--convert-to', 'pdf',
+                        '--outdir', temp_dir, abs_pptx_path
+                    ]
+                    process = subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=120)
+                    logger.debug(f"soffice stdout: {process.stdout}")
+                    logger.debug(f"soffice stderr: {process.stderr}")
+
+                    temp_pdf_path = Path(temp_dir) / f"{pptx_path.stem}.pdf"
+                    if temp_pdf_path.exists():
+                        output_path.unlink(missing_ok=True)
+                        temp_pdf_path.rename(output_path)
+                        logger.info(f"Successfully exported PDF using soffice: {output_path}")
+                        return str(output_path)
+                    else:
+                        raise FileNotFoundError(
+                            f"soffice conversion likely failed, PDF not found in temp dir: {temp_pdf_path}")
+            else:
+                logger.error("Cannot export PDF on Unix: Neither unoconv nor soffice found.")
+                return None
+
+        except FileNotFoundError as fnf_err:
+            logger.error(f"Tool not found for PDF export: {fnf_err}", exc_info=True)
+            return None
+        except subprocess.CalledProcessError as cpe:
+            logger.error(f"PDF conversion command failed (exit code {cpe.returncode}): {cpe.cmd}")
+            logger.error(f"stdout: {cpe.stdout}")
+            logger.error(f"stderr: {cpe.stderr}")
+            return None
+        except subprocess.TimeoutExpired as timeout:
+            logger.error(f"PDF conversion timed out after {timeout.timeout} seconds: {timeout.cmd}")
+            return None
         except Exception as e:
-            logger.error(f"Unix PDF export failed: {str(e)}")
-            raise
+            logger.error(f"Unix PDF export failed: {e}", exc_info=True)
+            return None
 
-    def _check_unoconv_installed(self) -> bool:
-        """Check if unoconv is available on the system."""
-        try:
-            subprocess.run(['unoconv', '--version'],
-                           stdout=subprocess.PIPE,
-                           stderr=subprocess.PIPE)
-            return True
-        except FileNotFoundError:
-            return False
-
-    def _ensure_libreoffice_installed(self) -> bool:
-        """Check if LibreOffice is available on the system."""
-        try:
-            subprocess.run(['soffice', '--version'],
-                           stdout=subprocess.PIPE,
-                           stderr=subprocess.PIPE)
-            return True
-        except FileNotFoundError:
-            return False
-
-    def _export_to_html(self, pptx_path: str, output_name: str) -> str:
+    def _export_to_html(self, pptx_path: Path, output_name: str) -> Optional[str]:
+        """Basic HTML export (extracts text content only)."""
         output_path = self.output_dir / f"{output_name}.html"
-        presentation = pptx.Presentation(pptx_path)
+        logger.info(f"Attempting basic HTML export (text only): {pptx_path} -> {output_path}")
+        try:
+            prs = pptx.Presentation(pptx_path)
+            html_content = [
+                "<html>",
+                "<head>",
+                f"<title>{output_name}</title>",
+                "<style>",
+                "body { font-family: sans-serif; margin: 20px; }",
+                ".slide { border: 1px solid #ccc; padding: 15px; margin-bottom: 20px; page-break-after: always; }",
+                ".slide h2 { color: #333; border-bottom: 1px solid #eee; padding-bottom: 5px; }",
+                ".slide p { margin-left: 20px; }",
+                "</style>",
+                "</head>",
+                "<body>"
+            ]
+            for i, slide in enumerate(prs.slides):
+                html_content.append(f"<div class='slide'><h2>Slide {i + 1}</h2>")
+                title = slide.shapes.title.text if slide.shapes.title else ""
+                if title:
+                    html_content.append(f"<h3>{title}</h3>")
 
-        html_content = ["<html><body>"]
-        for slide in presentation.slides:
-            html_content.append("<div class='slide'>")
-            for shape in slide.shapes:
-                if hasattr(shape, "text"):
-                    html_content.append(f"<p>{shape.text}</p>")
-            html_content.append("</div>")
-        html_content.append("</body></html>")
+                for shape in slide.shapes:
+                    if not shape.has_text_frame:
+                        continue
+                    for paragraph in shape.text_frame.paragraphs:
+                        prefix = ""
+                        if paragraph.level > 0:
+                            prefix = "&nbsp;" * (paragraph.level * 4) + "- "
+                        html_content.append(f"<p>{prefix}{paragraph.text}</p>")
 
-        with open(output_path, "w") as f:
-            f.write("\n".join(html_content))
+                html_content.append("</div>")
 
-        return str(output_path)
+            html_content.append("</body></html>")
 
-    def _export_to_images(self, pptx_path: str, output_name: str) -> List[str]:
+            with open(output_path, "w", encoding="utf-8") as f:
+                f.write("\n".join(html_content))
+
+            logger.info(f"Successfully exported basic HTML: {output_path}")
+            return str(output_path)
+        except Exception as e:
+            logger.error(f"Basic HTML export failed: {e}", exc_info=True)
+            output_path.unlink(missing_ok=True)
+            return None
+
+    def _export_to_images(self, pdf_path: Union[str, Path], output_name: str) -> Optional[List[str]]:
+        """Exports presentation slides as images (requires PDF)."""
+        pdf_path = Path(pdf_path)
         image_dir = self.output_dir / f"{output_name}_images"
-        image_dir.mkdir(exist_ok=True)
+        image_dir.mkdir(parents=True, exist_ok=True)
+        logger.info(f"Attempting image export from PDF: {pdf_path} -> {image_dir}")
 
-        # Convert PDF to images first
-        pdf_path = self._export_to_pdf(pptx_path, output_name)
-        images = pdf2image.convert_from_path(pdf_path)
+        try:
+            import pdf2image
+            images = pdf2image.convert_from_path(pdf_path, dpi=150)
+        except ImportError:
+            logger.error("Image export failed: 'pdf2image' library not installed.")
+            return None
+        except pdf2image.exceptions.PDFInfoNotInstalledError:
+            logger.error("Image export failed: 'poppler' not found or not in PATH.")
+            return None
+        except Exception as e:
+            logger.error(f"Failed to convert PDF to images: {e}", exc_info=True)
+            return None
 
         image_paths = []
-        for idx, image in enumerate(images):
-            image_path = image_dir / f"slide_{idx + 1}.png"
-            image.save(image_path)
-            image_paths.append(str(image_path))
+        try:
+            for idx, image in enumerate(images):
+                image_filename = f"slide_{idx + 1:03d}.png"
+                image_path = image_dir / image_filename
+                image.save(image_path, "PNG")
+                image_paths.append(str(image_path))
 
-        return image_paths
+            if not image_paths:
+                logger.warning("Image export resulted in zero images.")
+                return None
+
+            logger.info(f"Successfully exported {len(image_paths)} images to {image_dir}")
+            return image_paths
+        except Exception as e:
+            logger.error(f"Failed to save images: {e}", exc_info=True)
+            for img_path in image_paths:
+                Path(img_path).unlink(missing_ok=True)
+            return None

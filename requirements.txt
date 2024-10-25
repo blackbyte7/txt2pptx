@@ -1,19 +1,32 @@
-# requirements.txt
+# Core Langchain & LLMs
 langchain>=0.2.17
-langchain-community
-langchain-openai
-langchain-anthropic
-gradio~=5.11.0
-pdf2image==1.16.3
-python-pptx==0.6.21
-pydantic>=2.10.0
-comtypes>=1.1.14; platform_system == "Windows"
-pywin32>=305; platform_system == "Windows"
-unoconv  # For Unix-based PDF conversion
-        #You may need to install this system wide: apt-get install unoconv
-        #And libreoffice: apt-get install libreoffice
-python-dotenv~=1.0.1
-langgraph~=0.3.15
-pywin32; platform_system =="Windows"
-comtypes
-pypdf
+langchain-core>=0.2.40
+langchain-community>=0.2.7
+langchain-openai>=0.1.17
+langchain-anthropic>=0.1.16
+langgraph>=0.1.1
+
+# Presentation Generation & Handling
+python-pptx==0.6.23
+pypdf>=4.0.0 # For PDF loading
+
+# UI
+gradio>=4.0.0
+
+# PDF / Image Export Dependencies
+pdf2image>=1.17.0,<1.18.0 # Requires poppler (system install)
+
+# File Loading & Parsing
+unstructured>=0.14.10,<0.15.0 # For .docx, .pptx, .html loading
+lxml>=4.9.0 # Often needed by unstructured
+
+# Utilities
+python-dotenv>=1.0.0,<2.0.0
+pydantic>=2.0.0,<3.0.0 # Langchain 0.2 uses Pydantic v2
+
+# Vector Store
+faiss-cpu>=1.7.0,<1.8.0 # Or faiss-gpu
+
+# Windows Specific (for PDF Export via COM)
+pywin32>=306; platform_system == "Windows"
+comtypes>=1.2.0; platform_system == "Windows"

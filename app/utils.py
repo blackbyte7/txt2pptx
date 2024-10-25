@@ -1,204 +1,197 @@
-import json
 import time
+import json
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Dict, Union
+from langchain_core.documents import Document
 from langchain_community.document_loaders import (
     PyPDFLoader,
     TextLoader,
-    UnstructuredHTMLLoader,
-    UnstructuredWordDocumentLoader,
-    UnstructuredPowerPointLoader
+    UnstructuredFileLoader
+    # UnstructuredHTMLLoader,
+    # UnstructuredWordDocumentLoader,
+    # UnstructuredPowerPointLoader
 )
-from langchain_core.documents import Document
-from langchain_core.runnables import RunnableConfig
 
-from app.tools import create_pptx_code_tool
 from log_config.logging_config import logger
+from app.pptx_generator import PPTXGenerator
+ALLOWED_EXTENSIONS = {'.pdf', '.txt', '.html', '.htm', '.docx', '.pptx', '.md'}
 
 
-def load_documentation(file_path: str) -> List[Document]:
+def load_supported_documents(file_path: Union[str, Path]) -> List[Document]:
     """
-    Load documentation from a file path.
+    Load documents from a supported file path using appropriate loaders.
 
     Args:
-        file_path (str): Path to the documentation file
+        file_path (Union[str, Path]): Path to the input file.
 
     Returns:
-        List[Document]: Loaded documents
+        List[Document]: Loaded documents.
+
+    Raises:
+        ValueError: If the file type is unsupported.
+        FileNotFoundError: If the file does not exist.
+        Exception: For other loading errors.
     """
+    file_path = Path(file_path)
+    logger.info(f"Attempting to load document: {file_path}")
+
+    if not file_path.exists():
+        logger.error(f"File not found: {file_path}")
+        raise FileNotFoundError(f"Input file not found: {file_path}")
+
+    file_extension = file_path.suffix.lower()
+
+    if file_extension not in ALLOWED_EXTENSIONS:
+        logger.error(f"Unsupported file format: {file_extension}")
+        raise ValueError(
+            f"Unsupported file format: {file_extension}. Supported formats: {', '.join(ALLOWED_EXTENSIONS)}")
+
+    loader: Any = None
     try:
-        loader = PyPDFLoader(file_path)
+        if file_extension == '.pdf':
+            loader = PyPDFLoader(str(file_path))
+        elif file_extension == '.txt' or file_extension == '.md':
+            try:
+                loader = TextLoader(str(file_path), encoding='utf-8')
+                loader.load()
+                loader = TextLoader(str(file_path), encoding='utf-8')
+            except UnicodeDecodeError:
+                logger.warning("UTF-8 decoding failed, trying 'latin-1' encoding for .txt/.md file.")
+                loader = TextLoader(str(file_path), encoding='latin-1')
+            except Exception as text_load_err:
+                logger.error(f"Failed to initialize TextLoader: {text_load_err}")
+                raise
+        elif file_extension in ['.docx', '.pptx', '.html', '.htm']:
+            loader = UnstructuredFileLoader(str(file_path), mode="elements")
+        else:
+            raise ValueError(f"Loader logic error: Unsupported extension {file_extension} passed checks.")
+
         documents = loader.load()
+        logger.info(f"Successfully loaded {len(documents)} document parts from {file_path}")
+
+        documents = [doc for doc in documents if doc.page_content and doc.page_content.strip()]
+        if not documents:
+            logger.warning(f"No content could be extracted from {file_path} after loading.")
+            return []
+
         return documents
-    except Exception as e:
-        logger.error(f"Error loading documentation: {str(e)}")
+
+    except ImportError as ie:
+        logger.error(
+            f"ImportError loading {file_path}: {ie}. Ensure all dependencies in requirements.txt are installed.")
+        raise ImportError(f"Missing library required for {file_extension} files: {ie}") from ie
+    except FileNotFoundError:
         raise
+    except Exception as e:
+        logger.error(f"Failed to load or parse {file_path}: {e}", exc_info=True)
+        raise RuntimeError(f"Could not process input file {file_path}: {e}") from e
 
 
 def generate_presentation(
-        input_file: str,
-        style: str,
-        agent: Any,
-        llm_provider: str,
-        api_key: str,
-        rag_system: Any,
-        config: Optional[RunnableConfig] = None
-) -> str:
+        presentation_structure_json: Dict[str, Any],
+        output_filename_base: str = "generated_presentation",
+        output_dir: Union[str, Path] = "exports"
+) -> Optional[str]:
     """
-    Generate a presentation from an input file.
+    Generates a .pptx file from the structured JSON using the safe PPTXGenerator.
 
     Args:
-        input_file (str): Path to the input file
-        style (str): Presentation style
-        agent (Any): Agent for processing content
-        llm_provider (str): Language model provider
-        api_key (str): API key for the language model
-        rag_system (Any): Retrieval-augmented generation system
-        config (Optional[RunnableConfig]): Runnable configuration
+        presentation_structure_json (Dict[str, Any]): The structured JSON output from the agent.
+        output_filename_base (str): The base name for the output file (without extension).
+        output_dir (Union[str, Path]): The directory to save the output file.
 
     Returns:
-        str: Path to the generated presentation file
+        Optional[str]: Path to the generated presentation file, or None on failure.
     """
-    progress = ProgressTracker()
+    progress = ProgressTracker()  # Track progress internally
 
     try:
-        if not validate_input_file(input_file):
-            raise ValueError("Unsupported file format")
+        progress.update_progress('initializing_generator', "Setting up presentation generator...")
+        template_data = presentation_structure_json.get("template_info")
+        if not template_data:
+            logger.warning("Template info not found in presentation structure. Using default generator settings.")
+        generator = PPTXGenerator(template=template_data)
 
-        progress.update_progress('loading')
-        # Load the input file based on its format
-        loader = get_document_loader(input_file)
-        user_input = loader.load_and_split()[0].page_content
+        progress.update_progress('generating_pptx', "Building PowerPoint slides...")
+        presentation = generator.create_presentation_from_json(presentation_structure_json)
 
-        # Run the agent with the user input and selected style
-        progress.update_progress('processing')
-        output = agent.run(user_input, style)
+        if not presentation:
+            raise RuntimeError("PPTXGenerator failed to create a presentation object.")
 
-        # Generate the Python code
-        progress.update_progress('generating')
-        json_output = json.loads(output)
+        progress.update_progress('saving', "Saving presentation file...")
+        save_dir = Path(output_dir)
+        save_dir.mkdir(parents=True, exist_ok=True)
 
-        # Use the code generation tool directly
-        code_generation_input = {
-            "presentation_structure": json_output,
-            "style_requirements": {
-                "template": style,
-                "layout": "two_content",
-                "effects": "basic",
-                "design": "default"
-            },
-            "include_animations": True
-        }
-
-        python_code = create_pptx_code_tool(
-            code_generation_input,
-            llm_provider,
-            api_key,
-            rag_system,
-            config
-        )
-
-        # Run the generated Python code
-        progress.update_progress('saving')
-
-        # Execute the generated code and save the presentation
-        namespace = {}
-        exec(python_code, namespace)
-        presentation = namespace['create_presentation']()
-
-        # Save the generated PowerPoint presentation
         timestamp = time.strftime("%Y%m%d-%H%M%S")
-        output_file = f"generated_presentation_{timestamp}.pptx"
-        presentation.save(output_file)
+        output_filename = f"{output_filename_base}_{timestamp}.pptx"
+        output_path = save_dir / output_filename
 
-        logger.info(f"Successfully generated presentation: {output_file}")
-        return output_file
+        try:
+            presentation.save(str(output_path))
+            logger.info(f"Successfully generated and saved presentation: {output_path}")
+            progress.update_progress('complete', "Presentation saved.")
+            return str(output_path)
+        except Exception as save_err:
+            logger.error(f"Failed to save presentation to {output_path}: {save_err}", exc_info=True)
+            raise RuntimeError(f"Failed to save presentation: {save_err}") from save_err
 
     except Exception as e:
-        logger.error(f"Error in generate_presentation: {str(e)}")
-        raise
+        logger.error(f"Error in generate_presentation utility: {e}", exc_info=True)
+        return None
 
 
-def get_document_loader(file_path: str):
+def validate_input_file_path(file_path: Optional[Union[str, Path]]) -> bool:
     """
-    Select the appropriate document loader based on file extension.
-
-    Args:
-        file_path (str): Path to the document
-
-    Returns:
-        Document loader
+    Validates if the input file path string is not None and the file extension is allowed.
+    Does NOT check if the file exists.
     """
-    file_extension = Path(file_path).suffix.lower()
-    loaders = {
-        '.pdf': PyPDFLoader,
-        '.txt': TextLoader,
-        '.html': UnstructuredHTMLLoader,
-        '.htm': UnstructuredHTMLLoader,
-        '.docx': UnstructuredWordDocumentLoader,
-        '.pptx': UnstructuredPowerPointLoader
-    }
-
-    loader_class = loaders.get(file_extension)
-    if not loader_class:
-        raise ValueError(f"Unsupported file format: {file_extension}")
-
-    return loader_class(file_path)
+    if not file_path:
+        return False
+    try:
+        p = Path(file_path)
+        return p.suffix.lower() in ALLOWED_EXTENSIONS
+    except Exception:
+        return False
 
 
 class ProgressTracker:
-    """
-    A class to track and log progress of presentation generation.
-    """
+    """A simple class to track and log progress steps."""
 
     def __init__(self):
-        """
-        Initialize the progress tracker with predefined steps.
-        """
         self.steps = {
-            'loading': 'Loading input file',
-            'processing': 'Processing content',
-            'generating': 'Generating presentation',
-            'saving': 'Saving presentation'
+            'start': 'Starting process',
+            'loading': 'Loading input data',
+            'initializing_agent': 'Initializing AI Agent',
+            'processing': 'AI Processing Content',
+            'generating_structure': 'AI Generating Presentation Structure',
+            'analyzing': 'Analyzing Content Structure',
+            'initializing_generator': 'Initializing Presentation Generator',
+            'generating_pptx': 'Generating PowerPoint File',
+            'saving': 'Saving Presentation',
+            'exporting': 'Exporting to other formats',
+            'complete': 'Process complete'
         }
-        self.current_step = None
+        self.current_step_key = 'start'
+        logger.debug("ProgressTracker initialized.")
 
-    def update_progress(self, step: str, message: Optional[str] = None):
-        """
-        Update and log the current progress step.
+    def update_progress(self, step_key: str, message: Optional[str] = None):
+        """Update and log the current progress step."""
+        if step_key not in self.steps:
+            logger.warning(f"Unknown progress step key: {step_key}")
+            return
 
-        Args:
-            step (str): The current step in the process
-            message (Optional[str]): Additional message to log
-        """
-        self.current_step = step
+        self.current_step_key = step_key
+        log_message = self.steps[step_key]
         if message:
-            logger.info(f"{self.steps[step]}: {message}")
-        else:
-            logger.info(self.steps[step])
+            log_message = f"{log_message}: {message}"
+
+        logger.info(f"Progress: {log_message}")
 
 
-def validate_input_file(file_path: str) -> bool:
-    """
-    Validate the input file based on its extension.
-
-    Args:
-        file_path (str): Path to the input file
-
-    Returns:
-        bool: Whether the file extension is allowed
-    """
-    allowed_extensions = {'.pdf', '.txt', '.html', '.htm', '.docx', '.pptx'}
-    return Path(file_path).suffix.lower() in allowed_extensions
-
-
-# Export key functions and classes
 __all__ = [
-    'load_documentation',
+    'load_supported_documents',
     'generate_presentation',
-    'validate_input_file',
+    'validate_input_file_path',
     'ProgressTracker',
-    'get_document_loader'
+    'ALLOWED_EXTENSIONS'
 ]
-
-
