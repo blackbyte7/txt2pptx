@@ -1,5 +1,5 @@
 import json
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Union
 from langchain_core.language_models import BaseChatModel
 from langchain_core.output_parsers import StrOutputParser, JsonOutputParser, PydanticOutputParser
 from langchain_core.prompts import ChatPromptTemplate
@@ -18,9 +18,9 @@ class BulletPointInput(BaseModel):
         description="The name of the visual template being used (e.g., professional, creative). Should be included in the output.")
     max_slides: Optional[int] = Field(default=15, description="Suggestive maximum number of slides to generate.")
     max_points_per_slide: Optional[int] = Field(default=7,
-                                                description="Suggestive maximum number of bullet points per slide.")
+                                                description="Suggestive maximum number of bullet points per text element.")
     min_points_per_slide: Optional[int] = Field(default=2,
-                                                description="Suggestive minimum number of bullet points per slide.")
+                                                description="Suggestive minimum number of bullet points per text element.")
 
 
 class QualityCheckInput(BaseModel):
@@ -33,12 +33,53 @@ class QualityCheckInput(BaseModel):
                                               description="An optional time limit for the presentation in minutes.")
 
 
-# --- Output Schemas (for PydanticOutputParser) ---
+class ElementPosition(BaseModel):
+    left_inches: Optional[float] = Field(default=None, description="Position from left edge in inches.")
+    top_inches: Optional[float] = Field(default=None, description="Position from top edge in inches.")
+    width_inches: Optional[float] = Field(default=None, description="Width of the element in inches.")
+    height_inches: Optional[float] = Field(default=None, description="Height of the element in inches.")
+
+
+class TextElement(BaseModel):
+    element_type: str = Field(default="text", description="Type identifier for this element.")
+    title: Optional[str] = Field(default=None, description="Optional title specifically for this text block.")
+    bullet_points: List[str] = Field(default_factory=list,
+                                     description="List of key bullet points for this text element. Keep points concise.")
+    level: Optional[int] = Field(default=0, description="Indentation level for the text/bullets (0 is base).")
+    position: Optional[ElementPosition] = Field(default=None, description="Optional position and size override.")
+
+
+class TableElement(BaseModel):
+    element_type: str = Field(default="table", description="Type identifier for this element.")
+    title: Optional[str] = Field(default=None, description="Optional title for the table.")
+    headers: List[str] = Field(description="List of header strings for the table columns.")
+    rows: List[List[Any]] = Field(description="List of rows, where each row is a list of cell values (strings or numbers).")
+    position: Optional[ElementPosition] = Field(default=None, description="Optional position and size override.")
+    # style_id: Optional[str] = Field(default=None, description="Optional table style ID (from pptx constants).")
+
+
+class ChartElement(BaseModel):
+    element_type: str = Field(default="chart", description="Type identifier for this element.")
+    chart_type: str = Field(description="Type of chart (e.g., 'BAR_CLUSTERED', 'LINE', 'PIE'). Use python-pptx XL_CHART_TYPE names.")
+    title: Optional[str] = Field(default=None, description="Title of the chart.")
+    categories: List[str] = Field(description="List of category labels (X-axis for bar/line, slices for pie).")
+    series: Dict[str, List[Union[int, float]]] = Field(description="Dictionary where keys are series names and values are lists of data points corresponding to categories.")
+    position: Optional[ElementPosition] = Field(default=None, description="Optional position and size override.")
+
+
+class ImagePlaceholderElement(BaseModel):
+    element_type: str = Field(default="image_placeholder", description="Type identifier for this element.")
+    description: str = Field(description="Description of the image content needed (e.g., 'logo', 'graph showing upward trend').")
+    position: Optional[ElementPosition] = Field(default=None, description="Optional position and size override.")
+
+
+ContentType = Union[TextElement, TableElement, ChartElement, ImagePlaceholderElement]
+
+
 class SlideDesignElements(BaseModel):
-    layout: Optional[str] = Field(default="content",
-                                  description="Suggested layout key (e.g., title_content, two_content, comparison, title_only) based on the template and documentation context.")
-    visual_elements: Optional[List[str]] = Field(default=None,
-                                                 description="Placeholder for future image/chart suggestions.")
+    layout: Optional[str] = Field(default="title_content",
+                                  description="Suggested layout key (e.g., title_slide, title_content, two_content, blank) based on the template and documentation context.")
+    # visual_elements: Optional[List[str]] = Field(default=None, description="Placeholder for future explicit visual suggestions.")
 
 
 class SlideStructure(BaseModel):
@@ -46,8 +87,7 @@ class SlideStructure(BaseModel):
     slide_type: str = Field(default="content",
                             description="Type of slide (e.g., opening, content, closing, section_header).")
     title: str = Field(description="Concise and engaging title for the slide.")
-    bullet_points: List[str] = Field(default_factory=list,
-                                     description="List of key bullet points for the slide content. Keep points concise.")
+    content_elements: List[ContentType] = Field(description="List of content elements (text, tables, charts, image placeholders) for the slide body.")
     design_elements: Optional[SlideDesignElements] = Field(default_factory=SlideDesignElements,
                                                            description="Suggestions for layout and visuals, informed by documentation context.")
     speaker_notes: Optional[str] = Field(default=None, description="Optional notes for the speaker for this slide.")
@@ -86,27 +126,31 @@ class QualityAnalysisOutput(BaseModel):
 # --- Prompts ---
 
 BULLET_POINTS_PROMPT = ChatPromptTemplate.from_messages([
-    ("system", """You are an expert presentation designer using python-pptx concepts. Your task is to transform the given raw text content into a structured, engaging presentation outline in JSON format.
+    ("system", """You are an expert presentation designer using python-pptx concepts. Your task is to transform the given raw text content into a detailed, structured presentation outline in JSON format.
 
-Adhere strictly to the output JSON schema provided.
+Adhere strictly to the output JSON schema provided (`PresentationStructureOutput` containing `SlideStructure` with `content_elements` list).
 
 Guidelines:
-- Analyze the input text and identify key themes, sections, and points.
-- Structure the content logically across multiple slides (aim for {min_slides}-{max_slides} slides unless content dictates otherwise).
-- Create concise, impactful titles for each slide.
-- Generate clear and concise bullet points (aim for {min_points}-{max_points} per slide). Avoid overly long sentences.
-- Determine an appropriate `slide_type` for each slide (e.g., 'opening', 'content', 'section_header', 'closing').
-- Suggest a suitable `layout` key within `design_elements` based on the slide's content and type (e.g., 'title_slide', 'title_content', 'two_content', 'comparison', 'title_only'). **Use the provided documentation context to inform your layout suggestions where applicable.**
-- Optionally add brief `speaker_notes` for context or delivery cues.
-- Populate the `metadata` section, including the `presentation_style` and `template_name` provided in the input. Estimate duration based on slide count (approx. 1-2 min/slide).
-- Ensure the final output is a single, valid JSON object conforming to the PresentationStructureOutput schema, with no extra text before or after.
+- Analyze the input text to identify key themes, sections, data points, and potential visuals.
+- Structure the content logically across multiple slides (aim for {min_slides}-{max_slides} slides).
+- Create concise, impactful titles for each slide (`SlideStructure.title`).
+- For each slide, populate the `content_elements` list. Decide the best element type(s) for the information:
+    - Use `TextElement` for explanatory text, key takeaways, or lists. Generate clear bullet points (`bullet_points`).
+    - Use `TableElement` if the text contains structured data suitable for a table. Extract `headers` and `rows`.
+    - Use `ChartElement` if the text describes trends, comparisons, or proportions that can be visualized. Choose an appropriate `chart_type` (e.g., 'BAR_CLUSTERED', 'LINE', 'PIE' from python-pptx XL_CHART_TYPE), define `categories` and `series` data.
+    - Use `ImagePlaceholderElement` to indicate where a visual (like a logo, photo, or diagram) would be beneficial, providing a `description`.
+- Assign an appropriate `slide_type` (e.g., 'opening', 'content', 'closing').
+- Suggest a suitable `layout` key in `design_elements` (e.g., 'title_slide', 'title_content', 'two_content', 'blank'). **Use the provided documentation context to understand layout capabilities and how to best structure elements like tables or charts within standard layouts.** If a standard layout seems insufficient, suggest 'blank' and provide position hints in the element's `position` field if necessary.
+- Optionally add brief `speaker_notes`.
+- Populate the `metadata` section, including the `presentation_style` and `template_name` from input. Estimate duration (1-2 min/slide).
+- Ensure the final output is a single, valid JSON object conforming to the PresentationStructureOutput schema. No extra text or markdown.
 
 Input Details:
 - Content Style Guideline: {style}
 - Visual Template Name: {template_name}
 - Raw Content is provided by the user.
 
-**Consider the following context from python-pptx documentation when deciding on slide structures and suggesting layouts, if relevant:**
+**Leverage the following context from python-pptx documentation to inform your decisions on structuring content elements (especially tables and charts) and suggesting appropriate slide layouts:**
 <documentation_context>
 {context}
 </documentation_context>
@@ -117,16 +161,16 @@ Output Format Instructions: {format_instructions}
 ])
 
 QUALITY_CHECK_PROMPT = ChatPromptTemplate.from_messages([
-    ("system", """You are a presentation quality assurance expert. Analyze the provided presentation structure JSON based on clarity, flow, engagement, and suitability for the target audience and time limit.
+    ("system", """You are a presentation quality assurance expert. Analyze the provided presentation structure JSON based on clarity, flow, engagement, appropriate use of elements (text, tables, charts), and suitability for the target audience and time limit.
 
 Evaluate these aspects:
-1.  **Content Clarity & Flow:** Is the information presented logically? Is it easy to understand? Is there a clear narrative arc (opening, body, closing)?
-2.  **Slide Structure:** Are titles clear? Are there too many/too few bullet points per slide? Is the content per slide appropriate? Are suggested layouts reasonable?
-3.  **Audience Engagement:** Is the structure likely to keep the '{audience}' engaged? Is the complexity appropriate?
-4.  **Time Management:** Based on the number of slides and content density, is it feasible within the {time_limit} minute limit (if provided)? Estimate time if no limit given.
-5.  **Overall Effectiveness:** Does the structure effectively convey the core message?
+1.  **Content Clarity & Flow:** Is the information presented logically? Is there a clear narrative arc?
+2.  **Slide Structure & Element Choice:** Are titles clear? Is the choice of text, tables, charts appropriate for the content on each slide? Is the complexity of elements suitable? Are suggested layouts reasonable?
+3.  **Audience Engagement:** Is the structure likely to keep the '{audience}' engaged? Is the mix of elements effective?
+4.  **Time Management:** Based on the number and complexity of slides/elements, is it feasible within the {time_limit} minute limit (if provided)? Estimate time if no limit given.
+5.  **Overall Effectiveness:** Does the structure effectively convey the core message using the chosen elements?
 
-Provide your analysis in a JSON format conforming to the QualityAnalysisOutput schema. Be specific and constructive in your feedback.
+Provide your analysis in a JSON format conforming to the QualityAnalysisOutput schema. Be specific and constructive.
 
 Output Format Instructions: {format_instructions}
 """),
@@ -134,7 +178,6 @@ Output Format Instructions: {format_instructions}
 ])
 
 
-# --- Tool Implementation Functions ---
 
 def create_bullet_points_tool(
         input_data: BulletPointInput,
@@ -143,19 +186,19 @@ def create_bullet_points_tool(
         config: Optional[Dict] = None
 ) -> str:
     """
-    Creates a structured presentation outline (JSON) from text content using an LLM,
-    optionally enhanced with RAG context from python-pptx documentation.
+    Creates a detailed, structured presentation outline (JSON) from text content,
+    including various element types (text, tables, charts), using an LLM and optional RAG context.
     This function contains the core logic for the 'Bullet_Points_Generator' tool.
     """
     logger.info(
         f"Executing create_bullet_points_tool for style '{input_data.style}', template '{input_data.template_name}'.")
     try:
-        # --- RAG Integration ---
         context = "No specific documentation context available."
         if retriever:
             try:
-                query = (f"Best practices for python-pptx slide layouts and structuring content for "
-                         f"a {input_data.style} presentation covering topics like: {input_data.content[:250]}...")
+                query = (f"How to structure python-pptx elements like text, tables (add_table), "
+                         f"and charts (add_chart, XL_CHART_TYPE) within slide layouts for a {input_data.style} presentation. "
+                         f"Content involves topics like: {input_data.content[:250]}...")
                 logger.debug(f"RAG Query for structuring: {query}")
 
                 retrieved_docs = retriever.invoke(query)
@@ -194,8 +237,27 @@ def create_bullet_points_tool(
             config=config
         )
 
+        for slide in response.slides:
+            for i, element in enumerate(slide.content_elements):
+                 if not getattr(element, 'element_type', None):
+                    element_type_mapping = {
+                        "TextElement": "text",
+                        "TableElement": "table",
+                        "ChartElement": "chart",
+                        "ImagePlaceholderElement": "image_placeholder"
+                    }
+                    class_name = element.__class__.__name__
+                    inferred_type = element_type_mapping.get(class_name)
+                    if inferred_type:
+                         logger.warning(f"Slide {slide.slide_number}, Element {i}: Missing element_type, inferred as '{inferred_type}' from class {class_name}")
+                         element.element_type = inferred_type
+                    else:
+                         logger.error(f"Slide {slide.slide_number}, Element {i}: Missing element_type and cannot infer from unknown class {class_name}")
+                         # slide.content_elements[i] = TextElement(element_type="text", bullet_points=["Error: Invalid element type"])
+
+
         json_output = response.json(indent=2)
-        logger.info("Successfully generated presentation structure JSON.")
+        logger.info("Successfully generated detailed presentation structure JSON.")
         logger.debug(f"Generated Structure JSON (preview): {json_output[:500]}...")
         return json_output
 
@@ -210,7 +272,7 @@ def create_quality_check_tool(
         config: Optional[Dict] = None
 ) -> str:
     """
-    Analyzes presentation structure JSON for quality and provides feedback (JSON).
+    Analyzes detailed presentation structure JSON for quality and provides feedback (JSON).
     This function contains the core logic for the 'Presentation_Quality_Checker' tool.
     """
     logger.info(f"Executing create_quality_check_tool for audience '{input_data.target_audience}'.")
@@ -219,8 +281,9 @@ def create_quality_check_tool(
 
         try:
             structure_str = json.dumps(input_data.presentation_structure, indent=2)
-        except TypeError:
-            structure_str = str(input_data.presentation_structure)
+        except TypeError as te:
+             logger.error(f"Input presentation_structure is not JSON serializable: {te}")
+             raise ValueError(f"Invalid presentation structure received for quality check: {te}")
 
         chain = (
                 QUALITY_CHECK_PROMPT.partial(
@@ -252,6 +315,10 @@ __all__ = [
     'QualityCheckInput',
     'PresentationStructureOutput',
     'QualityAnalysisOutput',
+    'TextElement',
+    'TableElement',
+    'ChartElement',
+    'ImagePlaceholderElement',
     'create_bullet_points_tool',
     'create_quality_check_tool'
 ]
