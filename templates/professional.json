@@ -1,0 +1,25 @@
+{
+    "name": "professional",
+    "description": "Clean, modern, corporate style.",
+    "colors": {
+        "background": "#FFFFFF",
+        "text": "#2C3E50",
+        "accent1": "#3498DB",
+        "accent2": "#2980B9"
+    },
+    "font": {
+        "heading": "Calibri",
+        "body": "Calibri"
+    },
+    "layouts": {
+        "title_slide": 0,
+        "title_content": 1,
+        "section_header": 2,
+        "two_content": 3,
+        "comparison": 4,
+        "title_only": 5,
+        "blank": 6,
+        "content_with_caption": 7,
+        "picture_with_caption": 8
+    }
+}

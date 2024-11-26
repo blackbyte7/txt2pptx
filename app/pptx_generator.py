@@ -1,7 +1,7 @@
-from typing import Dict, Any, Optional, List, Union, Tuple
+from typing import Dict, Any, Optional, Tuple
 from pptx import Presentation
 from pptx.util import Pt, Inches
-from pptx.enum.text import MSO_AUTO_SIZE, MSO_ANCHOR, PP_ALIGN # Keep if used, check usage
+from pptx.enum.text import MSO_AUTO_SIZE, MSO_ANCHOR, PP_ALIGN
 from pptx.enum.shapes import MSO_SHAPE
 from pptx.enum.chart import XL_CHART_TYPE, XL_LEGEND_POSITION, XL_LABEL_POSITION
 from pptx.chart.data import CategoryChartData

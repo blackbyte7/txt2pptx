@@ -1,0 +1,25 @@
+{
+    "name": "creative",
+    "description": "Bold, vibrant, and expressive style.",
+    "colors": {
+        "background": "#FDFEFE",
+        "text": "#5D6D7E",
+        "accent1": "#FF6B6B",
+        "accent2": "#4ECDC4"
+    },
+    "font": {
+        "heading": "Helvetica Neue",
+        "body": "Helvetica"
+    },
+    "layouts": {
+        "title_slide": 0,
+        "title_content": 1,
+        "section_header": 2,
+        "two_content": 3,
+        "comparison": 4,
+        "title_only": 5,
+        "blank": 6,
+        "content_with_caption": 7,
+        "picture_with_caption": 8
+    }
+}
