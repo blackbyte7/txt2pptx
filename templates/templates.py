@@ -1,6 +1,8 @@
+import copy
 import json
 from pathlib import Path
 from typing import Dict, Optional, List
+
 from log_config.logging_config import logger
 
 
@@ -104,7 +106,7 @@ class PresentationTemplates:
         if not template:
             logger.warning(f"Template '{name}' not found.")
             return None
-        return template.copy()
+        return copy.deepcopy(template)
 
     def add_template(self, name: str, template_data: Dict, overwrite: bool = False) -> bool:
         """Adds or updates a template and saves it to a JSON file."""

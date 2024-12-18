@@ -7,7 +7,7 @@ langchain-anthropic>=0.1.16
 langgraph>=0.1.1
 
 # Presentation Generation & Handling
-python-pptx==0.6.23
+python-pptx==0.6.22
 pypdf>=4.0.0 # For PDF loading
 
 # UI
@@ -30,3 +30,5 @@ faiss-cpu>=1.7.0,<1.8.0 # Or faiss-gpu
 # Windows Specific (for PDF Export via COM)
 pywin32>=306; platform_system == "Windows"
 comtypes>=1.2.0; platform_system == "Windows"
+comtypes~=1.4.10
+pytest~=8.3.5

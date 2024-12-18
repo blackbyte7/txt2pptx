@@ -1,10 +1,12 @@
 import platform
+import pdf2image
 import subprocess
 import tempfile
 from pathlib import Path
 from typing import Dict, List, Optional, Union
-import pdf2image
+
 import pptx
+
 from log_config.logging_config import logger
 
 # Conditional imports for Windows COM
@@ -29,20 +31,39 @@ class PresentationExporter:
 
     def _check_dependencies(self):
         """Checks for necessary external dependencies."""
+        poppler_found = True
+        pdf2image_lib_found = True
+
         if platform.system() != "Windows":
-            if not self._is_tool_installed("unoconv") and not self._is_tool_installed("soffice"):
+            unoconv_found = self._is_tool_installed("unoconv")
+            soffice_found = self._is_tool_installed("soffice")
+            if not unoconv_found and not soffice_found:
                 logger.warning(
                     "Neither 'unoconv' nor 'soffice' (LibreOffice) found in PATH. PDF export on Unix-like systems may fail.")
         try:
             import pdf2image
+            pdf2image_lib_found = True
+            try:
+                dummy_path_for_check = "non_existent_dummy_file.pdf"
+                _ = pdf2image.pdfinfo_from_path(dummy_path_for_check)
+                logger.debug("Poppler check: pdfinfo_from_path executed without PDFInfoNotInstalledError.")
+            except pdf2image.exceptions.PDFInfoNotInstalledError:
+                logger.warning(
+                    "'poppler' utility not found or not in PATH. Image export will be disabled. Install poppler for your OS.")
+                poppler_found = False
+            except FileNotFoundError:
+                logger.debug("Poppler check: Passed (pdfinfo_from_path raised FileNotFoundError on dummy path).")
+            except Exception as poppler_check_err:
+                logger.warning(f"Could not definitively check for poppler: {poppler_check_err}")
+                poppler_found = False
         except ImportError:
             logger.warning(
                 "'pdf2image' library not found. Image export will be disabled. Install with 'pip install pdf2image'.")
-        try:
-            pdf2image.pdfinfo_from_path
-        except pdf2image.exceptions.PDFInfoNotInstalledError:
-            logger.warning(
-                "'poppler' utility not found or not in PATH. Image export will be disabled. Install poppler for your OS.")
+            pdf2image_lib_found = False
+
+        self.can_export_images = pdf2image_lib_found and poppler_found
+        self.can_export_pdf_unix = self._is_tool_installed("unoconv") or self._is_tool_installed(
+            "soffice") if platform.system() != "Windows" else False
 
     def _is_tool_installed(self, name: str) -> bool:
         """Check if a command-line tool is installed and in PATH."""
@@ -82,7 +103,6 @@ class PresentationExporter:
                     if html_path:
                         export_details["html"] = html_path
                 elif format_type == "images":
-                    # Requires PDF conversion first
                     pdf_for_images = export_details.get("pdf")
                     if not pdf_for_images:
                         logger.info("Generating temporary PDF for image export.")

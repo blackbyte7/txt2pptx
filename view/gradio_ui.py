@@ -1,19 +1,18 @@
-import os
+import json
 import json
 import sys
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple, Any
 
 import gradio as gr
+from langchain_core.documents import Document
 
-# Local application imports
-from log_config.logging_config import logger
 from app.agents import create_agent, PresentationAgent
 from app.analyzers import ContentAnalyzer
 from app.exporters import PresentationExporter
-from app.utils import generate_presentation, load_supported_documents, ProgressTracker, ALLOWED_EXTENSIONS
+from app.utils import generate_presentation, load_supported_documents, ALLOWED_EXTENSIONS
+from log_config.logging_config import logger
 from templates.templates import PresentationTemplates
-from langchain_core.documents import Document
 
 
 def create_interface(

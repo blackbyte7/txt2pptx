@@ -1,17 +1,17 @@
 import json
 from functools import partial
 from typing import Dict, Any, List, Callable, Optional
-from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import SystemMessage, BaseMessage
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_core.runnables import RunnableConfig, Runnable, RunnablePassthrough
-from langchain_core.tools import BaseTool
-from langchain_core.retrievers import BaseRetriever
-from langchain_core.documents import Document
 from langchain_anthropic import ChatAnthropic
+from langchain_core.documents import Document
+from langchain_core.language_models import BaseChatModel
+from langchain_core.messages import SystemMessage
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.retrievers import BaseRetriever
+from langchain_core.runnables import RunnableConfig, Runnable
+from langchain_core.tools import BaseTool
 from langchain_openai import ChatOpenAI
 from langgraph.prebuilt import create_react_agent
-from log_config.logging_config import logger
+from app.rag import EnhancedRAG
 from app.tools import (
     create_bullet_points_tool,
     create_quality_check_tool,
@@ -19,7 +19,7 @@ from app.tools import (
     QualityCheckInput,
     # PresentationStructureOutput,
 )
-from app.rag import EnhancedRAG
+from log_config.logging_config import logger
 
 
 class PresentationAgent:
@@ -57,15 +57,15 @@ Agent -> Final Answer: {"metadata": ..., "slides": [{"title": "...", "content_el
         ])
 
         self.agent_runnable: Runnable = create_react_agent(
-            llm=self.llm,
+            model=self.llm,
             tools=self.tools,
-            messages_modifier=self.prompt
+            prompt=self.prompt,
+            # messages_modifier=SystemMessage(content=self.system_prompt)
         )
         logger.info(
             f"PresentationAgent initialized with LLM: {llm.__class__.__name__} and Tools: {[t.name for t in tools]}. RAG Retriever: {'Provided' if retriever else 'Not Provided'}")
 
-    def run(self, user_input: str, style: str, template_name: str, config: Optional[RunnableConfig] = None) -> Dict[
-        str, Any]:
+    def run(self, user_input: str, style: str, template_name: str, config: Optional[RunnableConfig] = None) -> Dict[str, Any]:
         """
         Executes the presentation creation process using the ReAct agent.
 
@@ -80,7 +80,7 @@ Agent -> Final Answer: {"metadata": ..., "slides": [{"title": "...", "content_el
 
         Raises:
             ValueError: If the agent fails to produce a valid JSON output or the JSON lacks expected structure.
-            Exception: For other agent execution errors.
+            RuntimeError: For other agent execution errors.
         """
         logger.info(f"Running PresentationAgent with style='{style}', template='{template_name}'")
         agent_input_message = f"""
@@ -94,10 +94,10 @@ Agent -> Final Answer: {"metadata": ..., "slides": [{"title": "...", "content_el
         ---
         """
 
+        agent_response = None
         try:
             agent_input = {"input": agent_input_message, "chat_history": []}
             effective_config = config or RunnableConfig()
-            # effective_config = RunnableConfig(configurable={"llm": self.llm, "retriever": self.retriever})
             agent_response = self.agent_runnable.invoke(agent_input, config=effective_config)
 
             final_response_content = None
@@ -116,7 +116,7 @@ Agent -> Final Answer: {"metadata": ..., "slides": [{"title": "...", "content_el
                     f"Agent execution finished but produced no recognizable string output. Response: {agent_response}")
                 raise ValueError("Agent produced no parsable string output.")
 
-            logger.debug(f"Agent raw output string:\n{final_response_content[:500]}...")  # Log preview
+            logger.debug(f"Agent raw output string:\n{final_response_content[:500]}...")
 
             cleaned_json_string = final_response_content.strip()
             if cleaned_json_string.startswith("```json"):
@@ -136,29 +136,36 @@ Agent -> Final Answer: {"metadata": ..., "slides": [{"title": "...", "content_el
                     raise ValueError("Agent output is JSON but not a dictionary (object).")
                 if "slides" not in presentation_json:
                     raise ValueError("Agent output JSON is missing the required 'slides' key.")
-                if not isinstance(presentation_json["slides"], list):
+                if not isinstance(presentation_json.get("slides"), list):
                     raise ValueError("Agent output JSON 'slides' key is not a list.")
-                if presentation_json["slides"]:
+                if presentation_json.get("slides"):
                     first_slide = presentation_json["slides"][0]
-                    if not isinstance(first_slide, dict) or "content_elements" not in first_slide:
+                    if not isinstance(first_slide, dict):
+                        logger.warning("First slide in agent JSON is not a dictionary.")
+                    elif "content_elements" not in first_slide:
                         logger.warning("First slide in agent JSON might be missing 'content_elements'.")
 
                 return presentation_json
+
             except json.JSONDecodeError as json_err:
                 logger.error(f"Failed to parse agent's final output as JSON: {json_err}")
-                logger.error(
-                    f"Agent raw output that failed parsing (after cleaning):\n{cleaned_json_string}")
+                logger.error(f"Agent raw output that failed parsing (after cleaning):\n{cleaned_json_string}")
                 error_context = cleaned_json_string[:200] + "..." if len(
                     cleaned_json_string) > 200 else cleaned_json_string
                 raise ValueError(
-                    f"Agent did not return valid JSON. Error: {json_err}. Output started with: {error_context}")
-            except ValueError as validation_err:
-                logger.error(f"Parsed JSON failed validation: {validation_err}")
-                logger.error(f"Problematic JSON structure: {presentation_json}")
-                raise validation_err
+                    f"Agent did not return valid JSON. Error: {json_err}. Output started with: {error_context}") from json_err
 
         except Exception as e:
-            logger.error(f"Error during PresentationAgent execution: {e}", exc_info=True)
+            if isinstance(e, ValueError) and (
+                    "Agent produced no parsable string output." in str(e) or
+                    "Agent did not return valid JSON." in str(e) or
+                    "Agent output is JSON but not a dictionary" in str(e) or
+                    "Agent output JSON is missing the required 'slides' key." in str(e) or
+                    "Agent output JSON 'slides' key is not a list." in str(e)
+            ):
+                raise e
+
+            logger.error(f"An unexpected error occurred during PresentationAgent execution: {e}", exc_info=True)
             raise RuntimeError(f"An unexpected error occurred in the agent: {e}") from e
 
 

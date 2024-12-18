@@ -3,16 +3,12 @@ import sys
 from pathlib import Path
 from typing import Optional, List
 from dotenv import load_dotenv
-from log_config.logging_config import logger, setup_logging
-from view.gradio_ui import launch_interface
-from app.utils import load_supported_documents
-from templates.templates import PresentationTemplates
 from langchain_core.documents import Document
+from app.utils import load_supported_documents
+from log_config.logging_config import setup_logging
+from templates.templates import PresentationTemplates
+from view.gradio_ui import launch_interface
 
-
-# PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
-# if PROJECT_ROOT not in sys.path:
-#     sys.path.append(PROJECT_ROOT)
 
 def main():
     """Main function to configure and launch the application."""

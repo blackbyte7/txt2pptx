@@ -1,7 +1,8 @@
-import pytest
 import json
-from pathlib import Path
 from unittest.mock import MagicMock
+
+import pytest
+from pptx.util import Pt
 
 
 @pytest.fixture(scope="session")
@@ -172,8 +173,11 @@ def sample_detailed_presentation_json(sample_template_data) -> dict:
 
 @pytest.fixture
 def mock_llm():
-    """Provides a mock LLM."""
-    return MagicMock(spec=["invoke", "bind"])
+    """Provides a mock LLM that includes the bind_tools method."""
+    mock = MagicMock(spec=["invoke", "bind", "bind_tools"])
+    mock.bind_tools.return_value = mock
+
+    return mock
 
 
 @pytest.fixture
@@ -208,12 +212,19 @@ def mock_agent_runnable():
 
 
 @pytest.fixture
-def mock_pptx_presentation():
+def mock_pptx_presentation(mock_pptx_slide):
     """ Mocks the pptx.Presentation object """
     mock_pres = MagicMock(name="Presentation")
     mock_pres.slides = MagicMock(name="Slides")
-    mock_pres.slide_layouts = [MagicMock(name="Layout_0"), MagicMock(name="Layout_1")]
-    mock_pres.slides.add_slide.return_value = mock_pptx_slide()
+    mock_pres.slide_layouts = [
+        MagicMock(name="Layout_0"), MagicMock(name="Layout_1"),
+        MagicMock(name="Layout_2"), MagicMock(name="Layout_3"),
+        MagicMock(name="Layout_4"), MagicMock(name="Layout_5"),
+        MagicMock(name="Layout_6"), MagicMock(name="Layout_7"),
+        MagicMock(name="Layout_8")
+    ]
+
+    mock_pres.slides.add_slide.return_value = mock_pptx_slide
     return mock_pres
 
 
@@ -231,36 +242,81 @@ def mock_pptx_slide():
     mock_title_ph = MagicMock(name="TitlePlaceholder")
     mock_title_ph.has_text_frame = True
     mock_title_ph.text_frame = MagicMock(name="TitleTextFrame")
-    mock_title_ph.text_frame.paragraphs = [MagicMock(name="TitleParagraph")]
-    mock_title_ph.text_frame.paragraphs[0].runs = []
-    mock_title_ph.text_frame.paragraphs[0].add_run.return_value = MagicMock(name="TitleRun",
-                                                                            font=MagicMock(color=MagicMock(rgb=None)))
+    mock_title_para = MagicMock(name="TitleParagraph", level=0)
+    mock_title_para.font = MagicMock(size=Pt(10))
+    mock_title_para.runs = []
+
+    mock_run_for_title = MagicMock(name="TitleRun",
+                                   font=MagicMock(
+                                       size=Pt(32),
+                                       color=MagicMock(rgb=None)
+                                   ))
+
+    mock_title_para.add_run.return_value = mock_run_for_title
+    mock_title_ph.text_frame.paragraphs = [mock_title_para]
     mock_slide.shapes.title = mock_title_ph
 
     mock_body_ph = MagicMock(name="BodyPlaceholder")
     mock_body_ph.has_text_frame = True
     mock_body_ph.text_frame = MagicMock(name="BodyTextFrame")
     mock_body_ph.text_frame.paragraphs = []
-    mock_body_ph.text_frame.add_paragraph.return_value = MagicMock(name="BodyParagraph",
-                                                                   font=MagicMock(color=MagicMock(rgb=None)))
+
+    mock_para_for_body = MagicMock(name="BodyParagraph",
+                                   level=1,
+                                   font=MagicMock(color=MagicMock(rgb=None)),
+                                   text="")
+    mock_body_ph.text_frame.add_paragraph.return_value = mock_para_for_body
     mock_body_ph.is_content_placeholder = True
     mock_body_ph.placeholder_format.idx = 1
-    # Simulate accessing placeholder by index (make it iterable/indexable)
     mock_slide.placeholders.__len__.return_value = 2
-    mock_slide.placeholders.__getitem__.side_effect = lambda idx: mock_body_ph if idx == 1 else MagicMock()
+    mock_slide.placeholders.__getitem__.side_effect = lambda \
+        idx: mock_body_ph if idx == 1 else mock_title_ph if idx == 0 else MagicMock()
 
-    mock_slide.shapes.add_textbox.return_value = MagicMock(text_frame=mock_body_ph.text_frame)  # Reuse mock frame logic
-    mock_slide.shapes.add_table.return_value = MagicMock(table=MagicMock(columns=[MagicMock(), MagicMock()],
-                                                                         cell=MagicMock(return_value=MagicMock(
-                                                                             text_frame=MagicMock(paragraphs=[MagicMock(
-                                                                                 font=MagicMock(
-                                                                                     color=MagicMock()))])))))
+    mock_table = MagicMock(name="Table")
+    mock_table.columns = MagicMock()
+    mock_column = MagicMock(width=None)
+    mock_table.columns.__getitem__.return_value = mock_column
+    mock_cell_text_frame = MagicMock(paragraphs=[MagicMock(font=MagicMock(color=MagicMock()))])
+    mock_cell = MagicMock(text_frame=mock_cell_text_frame)
+    mock_table.cell.return_value = mock_cell
+    mock_add_table_return = MagicMock(table=mock_table)
+    mock_slide.shapes.add_table.return_value = mock_add_table_return
+
+    mock_textbox_tf = MagicMock(name="TextBoxTextFrame")
+    mock_textbox_tf.paragraphs = []
+
+    mock_para_for_textbox = MagicMock(name="TextBoxParagraph")
+    mock_para_for_textbox.runs = []
+    mock_run_for_textbox = MagicMock(name="TextBoxRun", text="", font=MagicMock(size=None, color=MagicMock()))
+
+    def add_run_side_effect_textbox(*args, **kwargs):
+        mock_para_for_textbox.runs.append(mock_run_for_textbox)
+        return mock_run_for_textbox
+
+    mock_para_for_textbox.add_run.side_effect = add_run_side_effect_textbox
+    mock_para_for_textbox.clear = MagicMock(side_effect=lambda: setattr(mock_para_for_textbox, 'runs', []))
+
+    def add_para_side_effect_textbox(*args, **kwargs):
+        mock_para_for_textbox.runs = []
+        mock_para_for_textbox.clear.reset_mock()
+        mock_para_for_textbox.add_run.reset_mock()
+        mock_textbox_tf.paragraphs.append(mock_para_for_textbox)
+        return mock_para_for_textbox
+
+    mock_textbox_tf.add_paragraph.side_effect = add_para_side_effect_textbox
+
+    mock_slide.shapes.add_textbox.return_value = MagicMock(text_frame=mock_textbox_tf)
+    mock_slide._mock_textbox_tf = mock_textbox_tf
     mock_slide.shapes.add_chart.return_value = MagicMock(
-        chart=MagicMock(chart_title=MagicMock(text_frame=MagicMock(paragraphs=[MagicMock()])), legend=MagicMock(),
+        chart=MagicMock(chart_title=MagicMock(text_frame=MagicMock(paragraphs=[MagicMock()])),
+                        legend=MagicMock(),
                         plots=[MagicMock(has_data_labels=False,
                                          data_labels=MagicMock(font=MagicMock(color=MagicMock())))]))
+
     mock_slide.shapes.add_shape.return_value = MagicMock(
+        name="MockedRectangle",
         text_frame=MagicMock(paragraphs=[MagicMock(font=MagicMock(color=MagicMock()))]),
-        line=MagicMock(color=MagicMock()), fill=MagicMock())
+        line=MagicMock(color=MagicMock(), dash_style=None),
+        fill=MagicMock())
 
     return mock_slide

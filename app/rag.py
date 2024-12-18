@@ -6,7 +6,7 @@ from langchain_core.embeddings import Embeddings
 from langchain_core.language_models import BaseLanguageModel
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.runnables import RunnablePassthrough, RunnableSerializable
+from langchain_core.runnables import RunnablePassthrough, RunnableSerializable, RunnableLambda
 from langchain_core.vectorstores import VectorStore
 from langchain_openai import OpenAIEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -18,10 +18,10 @@ try:
     FAISS_AVAILABLE = True
 except ImportError:
     logger.warning(
-        "FAISS not found. RAG features will be disabled. Install with 'pip install faiss-cpu' or 'pip install faiss-gpu'.")
+        "FAISS not found. RAG will be disabled. Install with 'pip install faiss-cpu' or 'pip install faiss-gpu'.")
     FAISS_AVAILABLE = False
 
-    # Define a dummy FAISS class if not available to avoid errors on type hinting
+    # Dummy FAISS class if not available to avoid errors on type hinting
     class FAISS:
         pass
 
@@ -47,7 +47,7 @@ class EnhancedRAG:
         self.text_splitter = text_splitter or RecursiveCharacterTextSplitter(
             chunk_size=500,
             chunk_overlap=50,
-            separators=["\n\n", "\n", ". ", "? ", "! ", ", ", " ", ""],  # Added more separators
+            separators=["\n\n", "\n", ". ", "? ", "! ", ", ", " ", ""],
             length_function=len,
         )
         self.vector_store_cls = vector_store_cls
@@ -141,6 +141,7 @@ class EnhancedRAG:
         """
         retriever = self.get_retriever(k=retriever_k)
         if not retriever:
+            logger.warning("Cannot create RAG chain: Retriever is unavailable.")
             return None
 
         template = prompt_template or """
@@ -157,7 +158,7 @@ class EnhancedRAG:
 
         rag_chain = (
                 {
-                    "context": retriever | self._format_docs,
+                    "context": retriever | RunnableLambda(self._format_docs),
                     "question": RunnablePassthrough()
                 }
                 | prompt

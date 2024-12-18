@@ -1,8 +1,6 @@
 import time
-import json
 from pathlib import Path
 from typing import Any, List, Optional, Dict, Union
-from langchain_core.documents import Document
 from langchain_community.document_loaders import (
     PyPDFLoader,
     TextLoader,
@@ -11,9 +9,10 @@ from langchain_community.document_loaders import (
     # UnstructuredWordDocumentLoader,
     # UnstructuredPowerPointLoader
 )
-
-from log_config.logging_config import logger
+from langchain_core.documents import Document
 from app.pptx_generator import PPTXGenerator
+from log_config.logging_config import logger
+
 ALLOWED_EXTENSIONS = {'.pdf', '.txt', '.html', '.htm', '.docx', '.pptx', '.md'}
 
 
@@ -47,32 +46,38 @@ def load_supported_documents(file_path: Union[str, Path]) -> List[Document]:
             f"Unsupported file format: {file_extension}. Supported formats: {', '.join(ALLOWED_EXTENSIONS)}")
 
     loader: Any = None
+    documents: List[Document] = []
+
     try:
         if file_extension == '.pdf':
             loader = PyPDFLoader(str(file_path))
+            documents = loader.load()
         elif file_extension == '.txt' or file_extension == '.md':
             try:
+                logger.debug(f"Attempting to load {file_path} with UTF-8 encoding.")
                 loader = TextLoader(str(file_path), encoding='utf-8')
-                loader.load()
-                loader = TextLoader(str(file_path), encoding='utf-8')
+                documents = loader.load()
+                logger.debug("Successfully loaded with UTF-8.")
             except UnicodeDecodeError:
                 logger.warning("UTF-8 decoding failed, trying 'latin-1' encoding for .txt/.md file.")
                 loader = TextLoader(str(file_path), encoding='latin-1')
-            except Exception as text_load_err:
-                logger.error(f"Failed to initialize TextLoader: {text_load_err}")
-                raise
+                documents = loader.load()
+                logger.debug("Successfully loaded with Latin-1 fallback.")
+
         elif file_extension in ['.docx', '.pptx', '.html', '.htm']:
             loader = UnstructuredFileLoader(str(file_path), mode="elements")
+            documents = loader.load()
         else:
             raise ValueError(f"Loader logic error: Unsupported extension {file_extension} passed checks.")
 
-        documents = loader.load()
         logger.info(f"Successfully loaded {len(documents)} document parts from {file_path}")
 
         documents = [doc for doc in documents if doc.page_content and doc.page_content.strip()]
-        if not documents:
-            logger.warning(f"No content could be extracted from {file_path} after loading.")
-            return []
+        if not documents and file_path.stat().st_size > 0:
+            logger.warning(
+                f"No content could be extracted from {file_path} after loading and filtering, although file has size > 0.")
+        elif not documents:
+            logger.info(f"File {file_path} resulted in no extracted content (likely empty or filtered).")
 
         return documents
 
