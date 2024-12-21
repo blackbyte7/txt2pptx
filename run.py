@@ -1,42 +1,42 @@
 import os
 import sys
 from pathlib import Path
+import logging
 from typing import Optional, List
 from dotenv import load_dotenv
 from langchain_core.documents import Document
+from log_config.logging_config import setup_logging, logger
 from app.utils import load_supported_documents
-from log_config.logging_config import setup_logging
 from templates.templates import PresentationTemplates
 from view.gradio_ui import launch_interface
 
 
 def main():
     """Main function to configure and launch the application."""
-    global logger
 
     try:
-        env_path = Path('.') / 'environment.env'
+        env_path = Path(__file__).parent / 'environment.env'
         if env_path.exists():
+            logger.info(f"Loading environment variables from {env_path}")
             load_dotenv(dotenv_path=env_path)
-            logger.info(f"Loaded environment variables from {env_path}")
         else:
-            logger.info("'.env' file not found. Using system environment variables.")
+            logger.info(f"'environment.env' file not found at {env_path}. Using system environment variables.")
             load_dotenv()
 
-        logger = setup_logging(os.getenv('LOG_LEVEL', 'INFO'))
-        logger.info("Logger re-configured based on environment settings.")
+        log_level_from_env = os.getenv('LOG_LEVEL', 'INFO')
+
+        setup_logging(log_level_from_env)
+        logger.info(f"Logger configured to level: {logging.getLevelName(logger.level)}")
 
         openai_api_key = os.getenv("OPENAI_API_KEY")
         anthropic_api_key = os.getenv("ANTHROPIC_API_KEY")
 
         if not openai_api_key and not anthropic_api_key:
-            logger.error(
-                "Missing API Key: Set either OPENAI_API_KEY or ANTHROPIC_API_KEY in your environment or .env file.")
+            logger.error("Missing API Key: Set either OPENAI_API_KEY or ANTHROPIC_API_KEY in your environment or .env file.")
             print("\nERROR: Missing API Key. Please set OPENAI_API_KEY or ANTHROPIC_API_KEY.\n", file=sys.stderr)
             sys.exit(1)
         else:
-            logger.info(
-                f"Found API keys: OpenAI={'Yes' if openai_api_key else 'No'}, Anthropic={'Yes' if anthropic_api_key else 'No'}")
+            logger.info(f"Found API keys: OpenAI={'Yes' if openai_api_key else 'No'}, Anthropic={'Yes' if anthropic_api_key else 'No'}")
 
         template_manager = PresentationTemplates()
         available_templates = template_manager.list_templates()

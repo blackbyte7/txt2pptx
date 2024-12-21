@@ -1,10 +1,15 @@
 import json
+import time
+import uuid
+from pathlib import Path
 from typing import Optional, Dict, Any, List, Union, Literal
 from langchain_core.language_models import BaseChatModel
 from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.pydantic_v1 import BaseModel, Field
+from langchain_core.pydantic_v1 import BaseModel, Field, validator
 from langchain_core.retrievers import BaseRetriever
+from langchain_experimental.tools import PythonREPLTool
+
 from app.rag import EnhancedRAG
 from log_config.logging_config import logger
 
@@ -133,6 +138,31 @@ class QualityAnalysisOutput(BaseModel):
     areas_for_improvement: List[str] = Field(description="Specific suggestions for improvement.")
 
 
+class GenerateCodeInput(BaseModel):
+    """Input schema for the Code_Generator tool."""
+    content: str = Field(description="The raw text content to be converted into python-pptx code.")
+    style: str = Field(
+        description="The desired conceptual style (e.g., Professional). Influences potential code choices.")
+    template_name: str = Field(description="The name of the visual template (e.g., professional).")
+    template_data: Dict[str, Any] = Field(
+        description="The actual template data (colors, fonts, layouts) to be used in the generated code.")
+
+
+class GeneratedCodeOutput(BaseModel):
+    """Output schema for the generated python-pptx code."""
+    python_code: str = Field(description="The generated Python code using the python-pptx library.")
+    output_filename: str = Field(
+        description="The suggested filename (including .pptx extension) where the code will save the presentation.")
+
+    @validator('output_filename')
+    def filename_must_end_with_pptx(cls, v: str) -> str:
+        if not isinstance(v, str):
+            raise ValueError('output_filename must be a string')
+        if not v.endswith('.pptx'):
+            raise ValueError('output_filename must end with .pptx')
+        return v
+
+
 # --- Prompts ---
 
 BULLET_POINTS_PROMPT = ChatPromptTemplate.from_messages([
@@ -193,6 +223,38 @@ Provide your analysis in a JSON format conforming to the QualityAnalysisOutput s
 Output Format Instructions: {format_instructions}
 """),
     ("user", "Presentation Structure JSON:\n```json\n{structure}\n```")
+])
+
+CODE_GENERATION_PROMPT = ChatPromptTemplate.from_messages([
+    ("system", """You are an expert Python programmer specializing in the `python-pptx` library.
+Your task is to generate Python code that creates a PowerPoint presentation based on the provided text content, style, and template data.
+
+**Strict Requirements:**
+1.  **Import Necessary Libraries:** Start the code with necessary imports (`from pptx import Presentation`, `from pptx.util import Inches, Pt`, `from pptx.dml.color import RGBColor`, `from pptx.enum.chart import XL_CHART_TYPE`, etc.). Use `RGBColor.from_string` for hex colors.
+2.  **Use Template Data:** Directly use the provided `template_data` dictionary (colors, fonts, layouts) to style the presentation elements. Extract colors (`template_data['colors']`) and font names/sizes (`template_data['font']`) from it. Use `template_data['layouts']` to select slide layouts.
+3.  **Instantiate Presentation:** Create a `Presentation()` object.
+4.  **Add Slides:** Iterate through logical sections of the input content and add slides using `prs.slides.add_slide(prs.slide_layouts[index])`. Choose the layout index based on `template_data['layouts']`.
+5.  **Populate Slides:** Add titles, text (using bullet points in text frames), tables (`shapes.add_table`), charts (`shapes.add_chart`), or image placeholders (`shapes.add_shape` with text description) based on the content. Use helper functions if needed for complex element creation.
+6.  **Apply Styling:** Apply fonts and colors from `template_data` to text runs, table cells, chart elements, etc. Handle potential errors if template keys are missing.
+7.  **Saving:** The *last* line of your generated code MUST be `prs.save('{output_filename}')`. You will determine a suitable filename based on the context.
+8.  **Error Handling (Optional but Recommended):** Include basic error handling (e.g., try-except blocks around file operations or complex element additions).
+9.  **Standalone Code:** The generated code must be runnable independently using `python-pptx`.
+10. **Output Format:** Respond ONLY with the valid JSON object conforming to the `GeneratedCodeOutput` schema. Do NOT include any explanatory text, markdown formatting (like ```python), or comments outside the JSON structure or the Python code string itself.
+
+**Input Details:**
+- Content Style Guideline: {style}
+- Visual Template Name: {template_name}
+- Template Data (JSON): {template_data_json}
+- Raw Content: Provided by the user.
+
+**Leverage the following context from python-pptx documentation to write accurate and effective code:**
+<documentation_context>
+{context}
+</documentation_context>
+
+Output Format Instructions: {format_instructions}
+"""),
+    ("user", "Raw Content:\n```\n{content}\n```")
 ])
 
 
@@ -328,6 +390,96 @@ def create_quality_check_tool(
         raise ValueError(f"Failed to perform quality analysis: {e}")
 
 
+def create_code_generation_tool(
+        input_data: GenerateCodeInput,
+        llm: BaseChatModel,
+        retriever: Optional[BaseRetriever],
+        config: Optional[Dict] = None
+) -> str:
+    """
+    Generates python-pptx code to create a presentation based on text content,
+    style, template data, and optional RAG context.
+    This function contains the core logic for the 'Code_Generator' tool.
+    """
+    logger.info(
+        f"Executing create_code_generation_tool for style '{input_data.style}', template '{input_data.template_name}'.")
+    try:
+        context = "No specific documentation context available."
+        if retriever:
+            try:
+                query = (
+                    f"Generate python-pptx code examples for creating slides with text, tables, charts (like {input_data.style} style). "
+                    f"Focus on using Presentation(), add_slide(), slide_layouts, shapes.add_textbox(), shapes.add_table(), "
+                    f"shapes.add_chart(), font properties, RGBColor.from_string, and saving the presentation. "
+                    f"Content summary: {input_data.content[:250]}...")
+                logger.debug(f"RAG Query for code generation: {query}")
+
+                retrieved_docs = retriever.invoke(query)
+                if retrieved_docs:
+                    context = EnhancedRAG._format_docs(retrieved_docs)
+                    logger.info(
+                        f"Retrieved {len(retrieved_docs)} context chunks from documentation for code generation.")
+                    logger.debug(f"Retrieved Context Preview: {context[:300]}...")
+                else:
+                    logger.info("RAG retriever returned no documents for the code generation query.")
+                    context = "No relevant documentation context found for the query."
+            except Exception as rag_err:
+                logger.warning(f"Failed to retrieve or format RAG context for code gen: {rag_err}", exc_info=True)
+                context = "Error retrieving documentation context."
+        else:
+            logger.info("No retriever provided. Skipping RAG context retrieval for code gen.")
+
+        parser = PydanticOutputParser(pydantic_object=GeneratedCodeOutput)
+
+        timestamp = time.strftime("%Y%m%d-%H%M%S")
+        unique_id = str(uuid.uuid4())[:8]
+        suggested_filename = f"generated_code_{timestamp}_{unique_id}.pptx"
+
+        try:
+            template_data_json_str = json.dumps(input_data.template_data, indent=2)
+        except TypeError as e:
+            logger.error(f"Template data is not JSON serializable: {e}. Using basic representation.")
+            template_data_json_str = json.dumps(
+                {"name": input_data.template_name, "error": "Data not fully serializable"})
+
+        chain = (
+                CODE_GENERATION_PROMPT.partial(
+                    format_instructions=parser.get_format_instructions(),
+                    style=input_data.style,
+                    template_name=input_data.template_name,
+                    template_data_json=template_data_json_str,
+                    context=context,
+                    output_filename=suggested_filename
+                )
+                | llm
+                | parser
+        )
+
+        response: GeneratedCodeOutput = chain.invoke(
+            {"content": input_data.content},
+            config=config
+        )
+
+        safe_filename = Path(response.output_filename).name
+        save_dir = "exports"
+        output_path_in_code = Path(save_dir) / safe_filename
+        response.python_code = response.python_code.replace(
+            f"prs.save('{response.output_filename}')",
+            f"import os; os.makedirs('{save_dir}', exist_ok=True); prs.save(r'{str(output_path_in_code)}')",
+            1
+        )
+        response.output_filename = str(output_path_in_code)
+
+        json_output = response.json(indent=2)
+        logger.info(f"Successfully generated python-pptx code. Expected output file: {response.output_filename}")
+        logger.debug(f"Generated Code JSON: {json_output}")
+        return json_output
+
+    except Exception as e:
+        logger.error(f"Error in create_code_generation_tool: {e}", exc_info=True)
+        raise ValueError(f"Failed to generate python-pptx code: {e}")
+
+
 __all__ = [
     'BulletPointInput',
     'QualityCheckInput',
@@ -338,5 +490,6 @@ __all__ = [
     'ChartElement',
     'ImagePlaceholderElement',
     'create_bullet_points_tool',
-    'create_quality_check_tool'
+    'create_quality_check_tool',
+    'create_code_generation_tool'
 ]

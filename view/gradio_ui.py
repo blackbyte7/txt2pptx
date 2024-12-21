@@ -1,6 +1,6 @@
 import json
-import json
 import sys
+import traceback
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple, Any
 
@@ -13,6 +13,9 @@ from app.exporters import PresentationExporter
 from app.utils import generate_presentation, load_supported_documents, ALLOWED_EXTENSIONS
 from log_config.logging_config import logger
 from templates.templates import PresentationTemplates
+
+JSON_METHOD = "JSON Structure + Generator"
+CODE_METHOD = "Direct Code Generation (REPL)"
 
 
 def create_interface(
@@ -39,6 +42,7 @@ def create_interface(
             selected_template_name: str,
             selected_llm_provider: str,
             entered_api_key: Optional[str],
+            generation_method_choice: str,
             export_formats: List[str],
             analyze_content_flag: bool,
             enable_rag_flag: bool,
@@ -47,86 +51,38 @@ def create_interface(
     ) -> Tuple[Optional[List[str]], Optional[str]]:
         """
         Handles the Gradio button click event for presentation generation.
-        Returns a tuple: (list_of_output_file_paths_or_None, analysis_string_or_None)
         """
         progress(0, desc="▶️ Starting...")
-        logger.info("Received request from Gradio UI.")
+        logger.info(f"Received request via Gradio UI. Method: '{generation_method_choice}'")
         output_files_list: Optional[List[str]] = None
         analysis_results_str: Optional[str] = None
+        generated_pptx_path: Optional[str] = None
 
         if not input_file_obj:
             gr.Warning("⚠️ Please upload an input file.")
             return None, None
-
         try:
             input_file_path = input_file_obj.name
-            if not isinstance(input_file_path, str):
-                raise AttributeError("Could not get file path string.")
+            if not isinstance(input_file_path, str): raise AttributeError("File path not string.")
             logger.info(f"Input file path: {input_file_path}")
-        except (AttributeError, TypeError) as e:
-            logger.error(f"Failed to get file path from input object: {e}, object: {input_file_obj}")
+        except Exception as e:
+            logger.error(f"Failed to get file path: {e}, object: {input_file_obj}")
             gr.Error("🛑 Could not read the uploaded file object.")
             return None, None
 
         if not selected_template_name:
             gr.Warning("⚠️ Please select a presentation template.")
             return None, None
-
-        api_key_to_use = entered_api_key
+        api_key_to_use = entered_api_key or (
+            default_openai_key if selected_llm_provider == "OpenAI" else default_anthropic_key)
         if not api_key_to_use:
-            if selected_llm_provider == "OpenAI":
-                api_key_to_use = default_openai_key
-            elif selected_llm_provider == "Anthropic":
-                api_key_to_use = default_anthropic_key
-
-        if not api_key_to_use:
-            gr.Error(f"🛑 API Key for {selected_llm_provider} is required! Set it in the UI or environment.")
-            return None, None
-
-        docs_for_agent = loaded_docs_for_rag if enable_rag_flag else None
-        if enable_rag_flag and not loaded_docs_for_rag:
-            gr.Info("ℹ️ RAG enabled, but no documentation was loaded at startup. Context enhancement will be skipped.")
-
-        agent: Optional[PresentationAgent] = None
-        try:
-            progress(0.1, desc="🧠 Initializing AI Agent...")
-            logger.debug(
-                f"Creating agent with provider: {selected_llm_provider}, RAG: {'Enabled' if docs_for_agent else 'Disabled'}")
-            agent = create_agent(selected_llm_provider, api_key_to_use, loaded_docs=docs_for_agent)
-            if not agent: raise RuntimeError("create_agent returned None")
-        except Exception as e:
-            logger.error(f"Failed to create agent: {e}", exc_info=True)
-            gr.Error(f"🛑 Failed to initialize AI Agent: {e}")
-            return None, None
-
-        full_content: Optional[str] = None
-        try:
-            progress(0.2, desc="📄 Loading input file content...")
-            docs = load_supported_documents(input_file_path)
-            if not docs:
-                gr.Error(f"⚠️ Could not load or parse content from file: {Path(input_file_path).name}")
-                return None, None
-            full_content = "\n\n".join(
-                [doc.page_content for doc in docs if doc.page_content and doc.page_content.strip()])
-            logger.info(f"Loaded content length: {len(full_content)} characters.")
-            if not full_content:
-                gr.Error("⚠️ Input file seems to be empty or could not extract text.")
-                return None, None
-
-        except (FileNotFoundError, ValueError, RuntimeError, ImportError) as e:
-            logger.error(f"Error loading input file {input_file_path}: {e}", exc_info=True)
-            gr.Error(f"🛑 Error loading input file: {e}")
-            return None, None
-        except Exception as e:
-            logger.error(f"Unexpected error loading input file {input_file_path}: {e}", exc_info=True)
-            gr.Error(f"🛑 Unexpected error loading input file: {e}")
+            gr.Error(f"🛑 API Key for {selected_llm_provider} required!")
             return None, None
 
         final_template_data = template_manager.get_template(selected_template_name)
         if not final_template_data:
-            gr.Error(f"🛑 Selected template '{selected_template_name}' not found internally.")
+            gr.Error(f"🛑 Selected template '{selected_template_name}' not found.")
             return None, None
-
         if template_customization_json and template_customization_json.strip():
             try:
                 custom_data = json.loads(template_customization_json)
@@ -147,104 +103,171 @@ def create_interface(
                 logger.error(f"Error applying template customization: {e}", exc_info=True)
                 gr.Warning(f"⚠️ Error applying customization: {e}. Using base template.")
 
-        presentation_structure_json: Optional[Dict] = None
+        docs_for_agent = loaded_docs_for_rag if enable_rag_flag else None
+        if enable_rag_flag and not loaded_docs_for_rag:
+            gr.Info("ℹ️ RAG enabled, but no documentation was loaded at startup.")
+
+        agent: Optional[PresentationAgent] = None
         try:
-            progress(0.4, desc="✍️ AI Generating Structure...")
-            logger.info(f"Running agent. Style: '{selected_style_desc}', Template: '{final_template_data.get('name')}'")
-            presentation_structure_json = agent.run(
+            progress(0.1, desc="🧠 Initializing AI Agent...")
+            logger.debug(f"Creating agent for method '{generation_method_choice}'...")
+            agent = create_agent(selected_llm_provider, api_key_to_use, loaded_docs=docs_for_agent,
+                                 template_data=final_template_data)
+            if not agent: raise RuntimeError("create_agent returned None")
+        except Exception as e:
+            logger.error(f"Failed to create agent: {e}", exc_info=True)
+            gr.Error(f"🛑 Failed to initialize AI Agent: {e}")
+            return None, None
+
+        full_content: Optional[str] = None
+        try:
+            progress(0.2, desc="📄 Loading input file content...")
+            docs = load_supported_documents(input_file_path)
+            if not docs:
+                gr.Error(f"⚠️ Could not load or parse content from file: {Path(input_file_path).name}")
+                return None, None
+            full_content = "\n\n".join(
+                [doc.page_content for doc in docs if doc.page_content and doc.page_content.strip()])
+            logger.info(f"Loaded content length: {len(full_content)} characters.")
+            if not full_content:
+                gr.Error("⚠️ Input file seems to be empty or could not extract text.")
+                return None, None
+        except Exception as e:
+            logger.error(f"Unexpected error loading input file {input_file_path}: {e}", exc_info=True)
+            gr.Error(f"🛑 Unexpected error loading input file: {e}")
+            return None, None
+
+        try:
+            progress(0.4, desc="✍️ AI Processing & Generating...")
+            logger.info(f"Running agent for method: {generation_method_choice}")
+
+            agent_result = agent.run(
                 user_input=full_content,
                 style=selected_style_desc,
-                template_name=final_template_data.get('name', selected_template_name)
+                template_name=selected_template_name,
+                template_data=final_template_data,  # Pass the data
+                generation_method='code' if generation_method_choice == CODE_METHOD else 'json'
             )
-            presentation_structure_json["template_info"] = final_template_data
-            logger.info("Agent successfully generated presentation structure.")
 
-        except ValueError as ve:
-            logger.error(f"Agent failed to produce valid structure: {ve}", exc_info=True)
-            gr.Error(f"🛑 AI Agent Error: {ve}")
-            return None, None
-        except Exception as e:
-            logger.error(f"Error during agent execution: {e}", exc_info=True)
-            gr.Error(f"🛑 Error during AI generation: {e}")
-            return None, None
+            logger.debug(f"Agent run result: {agent_result}")
 
-        if analyze_content_flag and presentation_structure_json:
-            try:
-                progress(0.6, desc="🧐 Analyzing Content...")
-                logger.info("Performing content analysis...")
-                analysis_results = analyzer.analyze_presentation_structure(presentation_structure_json)
-                if analysis_results["suggestions"] or analysis_results["warnings"]:
-                    analysis_results_str = "📊 Content Analysis:\n"
-                    if analysis_results["warnings"]:
-                        analysis_results_str += "\n⚠️ Warnings:\n- " + "\n- ".join(analysis_results["warnings"])
-                    if analysis_results["suggestions"]:
-                        analysis_results_str += "\n\n💡 Suggestions:\n- " + "\n- ".join(analysis_results["suggestions"])
-                    logger.info("Analysis complete. Found issues/suggestions.")
-                    gr.Info("ℹ️ Content analysis complete. See results below.")
-                else:
-                    analysis_results_str = "📊 Content Analysis:\n✅ No major issues or suggestions found."
-                    logger.info("Analysis complete. No significant issues found.")
+            if agent_result.get("type") == "error":
+                raise RuntimeError(f"Agent execution failed: {agent_result.get('output', 'Unknown agent error')}")
 
-            except Exception as e:
-                logger.error(f"Error during content analysis: {e}", exc_info=True)
-                gr.Warning(f"⚠️ Could not perform content analysis: {e}")
-                analysis_results_str = "📊 Content Analysis:\n🛑 Error occurred during analysis."
+            if agent_result.get("type") == "json":
+                logger.info("Agent completed JSON structure generation.")
+                presentation_structure_json_str = agent_result.get("output")
+                if not presentation_structure_json_str:
+                    raise ValueError("Agent returned empty JSON output.")
 
-        pptx_file_path: Optional[str] = None
-        try:
-            progress(0.7, desc="⚙️ Generating PowerPoint File...")
-            output_base_name = Path(input_file_path).stem
-            pptx_file_path = generate_presentation(
-                presentation_structure_json=presentation_structure_json,
-                output_filename_base=output_base_name
-            )
-            if not pptx_file_path or not Path(pptx_file_path).exists():
-                raise RuntimeError("PPTX generation failed or did not produce a valid file path.")
-            logger.info(f"Successfully generated PPTX file: {pptx_file_path}")
-            output_files_list = [pptx_file_path]
+                try:
+                    presentation_structure_json = json.loads(presentation_structure_json_str)
+                    presentation_structure_json["template_info"] = final_template_data
+                except json.JSONDecodeError as json_err:
+                    logger.error(
+                        f"Failed to parse agent's JSON output: {json_err}\nOutput:\n{presentation_structure_json_str}")
+                    raise ValueError(f"Agent returned invalid JSON: {json_err}")
 
-        except Exception as e:
-            logger.error(f"Error generating PPTX file: {e}", exc_info=True)
-            gr.Error(f"🛑 Error generating PowerPoint file: {e}")
-            return None, analysis_results_str
-
-        if export_formats and pptx_file_path:
-            try:
-                progress(0.85, desc=f" L exporting...")
-                logger.info(f"Starting export process for formats: {export_formats}")
-                export_results = exporter.export_presentation(
-                    pptx_path=pptx_file_path,
-                    formats=export_formats,
-                    output_name=Path(pptx_file_path).stem
-                )
-                logger.debug(f"Export results dict: {export_results}")
-
-                if "exports" in export_results:
-                    for fmt, result in export_results["exports"].items():
-                        if isinstance(result, str) and Path(result).exists():
-                            output_files_list.append(result)
-                            logger.info(f"Successfully exported to {fmt}: {result}")
-                        elif isinstance(result, list):
-                            valid_images = [p for p in result if isinstance(p, str) and Path(p).exists()]
-                            if valid_images:
-                                output_files_list.extend(valid_images)
-                                logger.info(f"Successfully exported {len(valid_images)} images for format {fmt}")
-                            else:
-                                logger.warning(f"Export to {fmt} (images) produced no valid files.")
-                                gr.Warning(f"⚠️ Export to {fmt} (images) failed or produced no files.")
+                if analyze_content_flag:
+                    try:
+                        progress(0.6, desc="🧐 Analyzing Content Structure...")
+                        analysis_results = analyzer.analyze_presentation_structure(presentation_structure_json)
+                        if analysis_results["suggestions"] or analysis_results["warnings"]:
+                            analysis_results_str = "📊 Content Analysis:\n"
+                            if analysis_results["warnings"]:
+                                analysis_results_str += "\n⚠️ Warnings:\n- " + "\n- ".join(analysis_results["warnings"])
+                            if analysis_results["suggestions"]:
+                                analysis_results_str += "\n\n💡 Suggestions:\n- " + "\n- ".join(
+                                    analysis_results["suggestions"])
+                            logger.info("Analysis complete. Found issues/suggestions.")
+                            gr.Info("ℹ️ Content analysis complete. See results below.")
                         else:
-                            logger.error(f"Export to {fmt} failed or produced invalid result: {result}")
-                            gr.Warning(f"⚠️ Export to {fmt} failed: {result}")
+                            analysis_results_str = "📊 Content Analysis:\n✅ No major issues or suggestions found."
+                            logger.info("Analysis complete. No significant issues found.")
+                    except Exception as e:
+                        logger.error(f"Error during content analysis: {e}", exc_info=True)
+                        gr.Warning(f"⚠️ Could not perform content analysis: {e}")
+                        analysis_results_str = "📊 Content Analysis:\n🛑 Error occurred during analysis."
 
-            except Exception as e:
-                logger.error(f"Error during file export process: {e}", exc_info=True)
-                gr.Warning(f"⚠️ Error during export: {e}")
+                progress(0.7, desc="⚙️ Generating PowerPoint from JSON...")
+                output_base_name = Path(input_file_path).stem
+                generated_pptx_path = generate_presentation(
+                    presentation_structure_json=presentation_structure_json,
+                    output_filename_base=output_base_name
+                )
+                if not generated_pptx_path or not Path(generated_pptx_path).exists():
+                    raise RuntimeError("PPTX generation from JSON failed or did not produce a file.")
+                logger.info(f"Successfully generated PPTX from JSON: {generated_pptx_path}")
+
+            elif agent_result.get("type") == "code_execution":
+                logger.info("Agent completed code generation and REPL execution.")
+                generated_pptx_path = agent_result.get("generated_filename")
+                repl_output = agent_result.get("output", "")
+
+                if not generated_pptx_path:
+                    raise RuntimeError("Code execution finished, but agent did not return the generated filename.")
+                if not Path(generated_pptx_path).exists():
+                    logger.error(
+                        f"REPL execution finished, but file not found at expected path: {generated_pptx_path}. REPL Output: {repl_output}")
+                    raise RuntimeError(
+                        f"Code execution seems to have failed. Expected file '{Path(generated_pptx_path).name}' not found. Check logs and REPL output.")
+
+                logger.info(f"Successfully generated PPTX via code execution: {generated_pptx_path}")
+                gr.Info(f"Code execution successful. File: {Path(generated_pptx_path).name}")
+                analysis_results_str = "📊 Content Analysis:\n N/A for Direct Code Generation method."
+
+            else:
+                raise RuntimeError(f"Agent returned unexpected result type: {agent_result.get('type')}")
+
+        except Exception as e:
+            logger.error(f"Error during presentation generation pipeline: {e}", exc_info=True)
+            tb_str = traceback.format_exc()
+            gr.Error(f"🛑 Generation Failed: {e}\n\nTraceback:\n{tb_str[:1000]}...")
+            return output_files_list, analysis_results_str
+
+        output_files_list = []
+        if generated_pptx_path and Path(generated_pptx_path).exists():
+            output_files_list = [generated_pptx_path]
+            if export_formats:
+                try:
+                    progress(0.85, desc=f" L exporting...")
+                    logger.info(f"Starting export process for formats: {export_formats}")
+                    export_results = exporter.export_presentation(
+                        pptx_path=generated_pptx_path,
+                        formats=export_formats,
+                        output_name=Path(generated_pptx_path).stem
+                    )
+                    logger.debug(f"Export results dict: {export_results}")
+
+                    if "exports" in export_results:
+                        for fmt, result in export_results["exports"].items():
+                            if isinstance(result, str) and Path(result).exists():
+                                output_files_list.append(result)
+                                logger.info(f"Successfully exported to {fmt}: {result}")
+                            elif isinstance(result, list):
+                                valid_images = [p for p in result if isinstance(p, str) and Path(p).exists()]
+                                if valid_images:
+                                    output_files_list.extend(valid_images)
+                                    logger.info(f"Successfully exported {len(valid_images)} images for format {fmt}")
+                                else:
+                                    logger.warning(f"Export to {fmt} (images) produced no valid files.")
+                                    gr.Warning(f"⚠️ Export to {fmt} (images) failed or produced no files.")
+                            else:
+                                logger.error(f"Export to {fmt} failed or produced invalid result: {result}")
+                                gr.Warning(f"⚠️ Export to {fmt} failed: {result}")
+                except Exception as e:
+                    logger.error(f"Error during file export process: {e}", exc_info=True)
+                    gr.Warning(f"⚠️ Error during export: {e}")
+        else:
+            logger.error("Primary PPTX file was not generated or found. Cannot perform exports.")
+            gr.Warning("⚠️ Primary PPTX file generation failed, skipping exports.")
 
         progress(1.0, desc="✅ Done!")
         logger.info(f"Process completed. Returning files: {output_files_list}")
         gr.Info("✅ Presentation generation complete!")
 
-        return output_files_list, analysis_results_str
+        output_files_list = [f for f in output_files_list if f is not None]
+        return output_files_list if output_files_list else None, analysis_results_str
 
     with gr.Blocks(theme=gr.themes.Soft(), title="txt2pptx AI") as iface:
         gr.Markdown(
@@ -260,31 +283,37 @@ def create_interface(
                     label="1. Upload Document",
                     file_types=[ext for ext in ALLOWED_EXTENSIONS],
                 )
+                generation_method = gr.Radio(
+                    choices=[JSON_METHOD, CODE_METHOD],
+                    label="2. Generation Method",
+                    value=JSON_METHOD,
+                    info="Choose how the presentation is created."
+                )
                 style_desc = gr.Dropdown(
                     choices=["Default", "Professional", "Creative", "Minimalist", "Academic", "Technical", "Playful"],
-                    label="2. Choose Content Style",
+                    label="3. Choose Content Style",
                     info="Influences AI tone & structure.",
                     value="Default"
                 )
                 template = gr.Dropdown(
                     choices=template_choices,
-                    label="3. Select Visual Template",
+                    label="4. Select Visual Template",
                     info="Base look (colors, fonts, layouts).",
                     value=default_template_value
                 )
                 llm_provider = gr.Dropdown(
                     choices=llm_provider_choices,
-                    label="4. Select AI Provider",
+                    label="5. Select AI Provider",
                     value=default_llm_provider
                 )
                 api_key_input = gr.Textbox(
-                    label=f"5. {default_llm_provider} API Key (Optional)",
+                    label=f"6. {default_llm_provider} API Key (Optional)",
                     interactive=True,
                     info="Leave blank to use environment variable.",
                     type="password",
                     placeholder="Enter API Key if not set in environment"
                 )
-                llm_provider.change(lambda p: gr.update(label=f"5. {p} API Key (Optional)"), inputs=llm_provider,
+                llm_provider.change(lambda p: gr.update(label=f"6. {p} API Key (Optional)"), inputs=llm_provider,
                                     outputs=api_key_input)
 
                 submit_button = gr.Button("✨ Generate Presentation", variant="primary", scale=1)
@@ -295,34 +324,33 @@ def create_interface(
                     label="📊 Content Analysis Results",
                     lines=8,
                     interactive=False,
-                    placeholder="Analysis suggestions will appear here..."
+                    placeholder="Analysis suggestions will appear here (JSON method only)..."
                 )
 
                 with gr.Accordion("Advanced Options & Settings", open=False):
                     with gr.Row():
                         analyze_content = gr.Checkbox(
-                            label="Analyze Content Structure",
-                            #info="Check structure for potential issues.",
+                            label="Analyze Content (JSON Method)",
+                            info="Check structure for issues (only works with JSON method).",
                             value=True,
                             scale=1
                         )
                         enable_rag = gr.Checkbox(
                             label="Enhance with RAG Context",
-                            #info="Use documentation context to improve structure (if docs were loaded).",
+                            info="Use documentation context (if loaded).",
                             value=True,
                             scale=1
                         )
                     export_formats = gr.CheckboxGroup(
                         choices=[("PDF", "pdf"), ("HTML (Basic)", "html"), ("Images (PNG)", "images")],
                         label="Additional Export Formats",
-                        #info="Requires system setup (LibreOffice/Poppler) - see README.",
+                        info="Requires system setup (LibreOffice/Poppler).",
                         value=[]
                     )
                     template_customization = gr.Code(
                         label="Template Customization (JSON)",
                         language="json",
                         value='{\n  "colors": {\n    "accent1": "#FF5733",\n    "text": "#1C1C1C"\n  },\n  "font": {\n    "heading": "Georgia",\n    "body": "Arial"\n  }\n}',
-                        #info="Override parts of the selected visual template. Invalid JSON ignored.",
                         lines=6,
                         interactive=True
                     )
@@ -333,6 +361,7 @@ def create_interface(
             template,
             llm_provider,
             api_key_input,
+            generation_method,
             export_formats,
             analyze_content,
             enable_rag,
@@ -343,7 +372,8 @@ def create_interface(
         submit_button.click(
             fn=process_request,
             inputs=click_inputs,
-            outputs=click_outputs
+            outputs=click_outputs,
+            # api_name="generate"
         )
 
     return iface
