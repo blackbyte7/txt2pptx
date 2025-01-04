@@ -221,8 +221,8 @@ def create_interface(
 
         except Exception as e:
             logger.error(f"Error during presentation generation pipeline: {e}", exc_info=True)
-            tb_str = traceback.format_exc()
-            gr.Error(f"🛑 Generation Failed: {e}\n\nTraceback:\n{tb_str[:1000]}...")
+            # tb_str = traceback.format_exc()
+            gr.Error("🛑 Generation Failed: An internal error occurred. Please check the application logs for details.")
             return output_files_list, analysis_results_str
 
         output_files_list = []

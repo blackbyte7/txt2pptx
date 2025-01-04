@@ -1,8 +1,11 @@
 import json
+import uuid
 from unittest.mock import MagicMock
 
 import pytest
 from pptx.util import Pt
+
+from app.tools import GeneratedCodeOutput, CodeQualityAnalysisOutput, CodeQualityAnalysisOutput
 
 
 @pytest.fixture(scope="session")
@@ -320,3 +323,57 @@ def mock_pptx_slide():
         fill=MagicMock())
 
     return mock_slide
+
+
+@pytest.fixture
+def sample_safe_code() -> str:
+    return """
+from pptx import Presentation
+from pptx.util import Inches, Pt
+prs = Presentation()
+slide = prs.slides.add_slide(prs.slide_layouts[0])
+title = slide.shapes.title
+title.text = "Hello"
+import os; os.makedirs('exports', exist_ok=True); prs.save(r'exports/safe_code_test.pptx')
+"""
+
+
+@pytest.fixture
+def sample_unsafe_code() -> str:
+    return """
+import requests
+requests.get('http://example.com')
+from pptx import Presentation
+prs = Presentation()
+# ... rest of pptx code ...
+import os; os.makedirs('exports', exist_ok=True); prs.save(r'exports/unsafe_code_test.pptx')
+"""
+
+
+@pytest.fixture
+def mock_code_gen_output(tmp_path) -> str:
+    output_file = tmp_path / "exports" / f"test_code_gen_{uuid.uuid4()}.pptx"
+    output_file.parent.mkdir(exist_ok=True)
+    code_output = GeneratedCodeOutput(
+        python_code="from pptx import Presentation\nprs=Presentation()\n#...\nimport os; "
+                    "os.makedirs('exports', exist_ok=True); prs.save(r'" + str(output_file) + "')",
+        output_filename=str(output_file)
+    )
+    return code_output.json(indent=2)
+
+
+@pytest.fixture
+def mock_safe_quality_check_output() -> str:
+    qc_output = CodeQualityAnalysisOutput(is_safe=True, warnings=[], assessment="Looks safe")
+    return qc_output.json(indent=2)
+
+
+@pytest.fixture
+def mock_unsafe_quality_check_output() -> str:
+    qc_output = CodeQualityAnalysisOutput(is_safe=False, warnings=["Unsafe import detected"], assessment="Unsafe")
+    return qc_output.json(indent=2)
+
+
+@pytest.fixture
+def mock_repl_output() -> str:
+    return "REPL execution finished."

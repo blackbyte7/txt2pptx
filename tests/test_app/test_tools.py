@@ -8,9 +8,8 @@ from app.tools import (
     BulletPointInput,
     QualityCheckInput,
     PresentationStructureOutput,
-    QualityAnalysisOutput,
-    TextElement, TableElement, create_bullet_points_tool,
-    create_quality_check_tool
+    QualityAnalysisOutput,CodeQualityCheckInput, CodeQualityAnalysisOutput,
+    TextElement, TableElement, create_bullet_points_tool, create_code_quality_check_tool, create_quality_check_tool
 )
 from tests.conftest import (
     mock_llm, mock_retriever, sample_raw_text_content,
@@ -33,8 +32,7 @@ def test_create_bullet_points_tool_success_no_rag(mock_format_docs, mock_Parser,
     mock_chain = MagicMock()
     mock_chain.invoke.return_value = mock_output_object
 
-    # Assume the llm mocks invoke will eventually lead to the parser's invoke
-    mock_llm.invoke.return_value = MagicMock()  # Intermediate step
+    mock_llm.invoke.return_value = MagicMock()
 
     input_data = BulletPointInput(
         content=sample_raw_text_content,
@@ -227,3 +225,85 @@ def test_quality_analysis_output_schema():
     )
     assert out.overall_score == 50
     assert out.visual_suggestions is None
+
+
+def test_code_quality_check_input_schema():
+    inp = CodeQualityCheckInput(python_code="print('hello')")
+    assert inp.python_code == "print('hello')"
+
+
+def test_code_quality_analysis_output_schema():
+    out_safe = CodeQualityAnalysisOutput(is_safe=True, assessment="Looks good.")
+    assert out_safe.is_safe is True
+    assert not out_safe.warnings
+
+    out_unsafe = CodeQualityAnalysisOutput(is_safe=False, warnings=["Bad import"], assessment="Unsafe.")
+    assert out_unsafe.is_safe is False
+    assert out_unsafe.warnings == ["Bad import"]
+
+    out_unsafe_no_warn = CodeQualityAnalysisOutput(is_safe=False, assessment="Unsafe.")
+    assert out_unsafe_no_warn.warnings is not None
+    assert len(out_unsafe_no_warn.warnings) == 1
+    assert "Code marked as unsafe" in out_unsafe_no_warn.warnings[0]
+
+
+@patch('app.tools.PydanticOutputParser')
+def test_create_code_quality_check_tool_safe(mock_Parser, mock_llm, sample_safe_code):
+    mock_parser_instance = MagicMock()
+    mock_parser_instance.get_format_instructions.return_value = "mock_format_instructions"
+    mock_analysis_output = CodeQualityAnalysisOutput(
+        is_safe=True,
+        warnings=[],
+        assessment="Code appears safe and relevant for pptx generation."
+    )
+    mock_parser_instance.invoke.return_value = mock_analysis_output
+    mock_Parser.return_value = mock_parser_instance
+
+    input_data = CodeQualityCheckInput(python_code=sample_safe_code)
+
+    with patch('langchain_core.runnables.base.RunnableSequence.invoke',
+               return_value=mock_analysis_output) as mock_chain_invoke:
+        result_json_str = create_code_quality_check_tool(input_data, mock_llm)
+
+    mock_chain_invoke.assert_called_once()
+    call_args, call_kwargs = mock_chain_invoke.call_args
+    assert "python_code" in call_args[0]
+    assert call_args[0]["python_code"] == sample_safe_code
+
+    expected_json = mock_analysis_output.json(indent=2)
+    assert result_json_str == expected_json
+
+
+@patch('app.tools.PydanticOutputParser')
+def test_create_code_quality_check_tool_unsafe(mock_Parser, mock_llm, sample_unsafe_code):
+    mock_parser_instance = MagicMock()
+    mock_parser_instance.get_format_instructions.return_value = "mock_format_instructions"
+    mock_analysis_output = CodeQualityAnalysisOutput(
+        is_safe=False,
+        warnings=["Imports suspicious library 'requests'"],
+        assessment="Code appears unsafe due to suspicious import."
+    )
+    mock_parser_instance.invoke.return_value = mock_analysis_output
+    mock_Parser.return_value = mock_parser_instance
+
+    input_data = CodeQualityCheckInput(python_code=sample_unsafe_code)
+
+    with patch('langchain_core.runnables.base.RunnableSequence.invoke',
+               return_value=mock_analysis_output) as mock_chain_invoke:
+        result_json_str = create_code_quality_check_tool(input_data, mock_llm)
+
+    expected_json = mock_analysis_output.json(indent=2)
+    assert result_json_str == expected_json
+
+
+@patch('app.tools.PydanticOutputParser')
+def test_create_code_quality_check_tool_error(mock_Parser, mock_llm, sample_safe_code):
+    mock_chain_invoke = MagicMock(side_effect=Exception("LLM error during quality check"))
+    input_data = CodeQualityCheckInput(python_code=sample_safe_code)
+
+    with patch('langchain_core.runnables.base.RunnableSequence.invoke', mock_chain_invoke):
+        result_json_str = create_code_quality_check_tool(input_data, mock_llm)
+
+    result_data = json.loads(result_json_str)
+    assert result_data["is_safe"] is False
+    assert "Failed to perform code quality analysis" in result_data["warnings"][0]

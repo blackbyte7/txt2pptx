@@ -209,16 +209,17 @@ class PPTXGenerator:
                     apply_template_font = True
                     try:
                         if p.font and p.font.size and isinstance(p.font.size, Pt) and p.font.size.pt > 0:
-                             apply_template_font = False
-                             logger.debug(
-                                 f"Slide {slide_number}: Title placeholder seems to have existing font settings, retaining them.")
-                        elif p.font and p.font.size is not None and not isinstance(p.font.size, Pt):
-                            logger.debug(f"Slide {slide_number}: Title placeholder font size is mocked, assuming default formatting is needed.")
+                            apply_template_font = False
+                            logger.debug(
+                                f"Slide {slide_number}: Title placeholder seems to have existing font settings, retaining them.")
+                        elif p.font and p.font.size is not None:
+                            logger.debug(
+                                f"Slide {slide_number}: Title placeholder font size type {type(p.font.size)}, applying template font.")
                             apply_template_font = True
-
                     except AttributeError:
-                         logger.debug(f"Slide {slide_number}: Could not determine existing title font size, applying template font.")
-                         apply_template_font = True
+                        logger.debug(
+                            f"Slide {slide_number}: Could not determine existing title font size, applying template font.")
+                        apply_template_font = True
 
                     if apply_template_font:
                         font_props = self._get_font_props("heading")
@@ -241,16 +242,10 @@ class PPTXGenerator:
             tf = txBox.text_frame
             tf.alignment = PP_PARAGRAPH_ALIGNMENT.CENTER
             tf.word_wrap = True
-
-            if not tf.paragraphs:
-                 p = tf.add_paragraph()
-            else:
-                 p = tf.paragraphs[0]
-
+            p = tf.paragraphs[0] if tf.paragraphs else tf.add_paragraph()
             p.clear()
             run = p.add_run()
             run.text = title_text
-
             font_props = self._get_font_props("heading")
             title_color = self._get_color("accent1", self._get_color("text", DEFAULT_COLOR))
             run.font.name = font_props["name"]
@@ -276,54 +271,68 @@ class PPTXGenerator:
                         break
             if not body_placeholder:
                 for ph in slide.placeholders:
-                    if hasattr(ph, 'is_content_placeholder') and ph.is_content_placeholder and ph.placeholder_format.idx != 0: # Exclude title
+                    if hasattr(ph,
+                               'is_content_placeholder') and ph.is_content_placeholder and ph.placeholder_format.idx != 0:
                         body_placeholder = ph
-                        logger.debug(f"Slide {slide_number}: Found body placeholder via fallback logic at index {ph.placeholder_format.idx}.")
+                        logger.debug(
+                            f"Slide {slide_number}: Found body placeholder via fallback logic at index {ph.placeholder_format.idx}.")
                         break
         except (IndexError, KeyError, AttributeError) as ph_err:
             logger.warning(f"Slide {slide_number}: Error accessing placeholders: {ph_err}. Will add elements manually.")
             body_placeholder = None
 
-        current_element_index = 0
+        current_element_index_for_stacking = 0
         used_body_placeholder = False
-        for element_data in content_elements:
+        num_content_elements = len(content_elements)
+
+        for i, element_data in enumerate(content_elements):
             if not isinstance(element_data, dict):
-                logger.warning(f"Slide {slide_number}: Skipping invalid content element (not a dict).")
+                logger.warning(f"Slide {slide_number}: Skipping invalid content element {i + 1} (not a dict).")
                 continue
 
             element_type = element_data.get("element_type")
             position_data = element_data.get("position")
 
-            left, top, width, height = self._get_element_position(position_data, current_element_index, len(content_elements))
+            left, top, width, height = self._get_element_position(
+                position_data, i, num_content_elements
+            )
+
+            # Condition: Placeholder exists, element is text, placeholder not used yet, and it's the ONLY element
             use_placeholder_for_this = (body_placeholder and
                                         element_type == "text" and
-                                        not used_body_placeholder)
+                                        not used_body_placeholder and
+                                        num_content_elements == 1)
 
             try:
                 if element_type == "text":
-                    self._add_text_element(slide, element_data, body_placeholder if use_placeholder_for_this else None, left, top, width, height, slide_number)
+                    self._add_text_element(slide, element_data, body_placeholder if use_placeholder_for_this else None,
+                                           left, top, width, height, slide_number)
                     if use_placeholder_for_this:
                         used_body_placeholder = True
                     if not use_placeholder_for_this:
-                        current_element_index += 1
+                        current_element_index_for_stacking += 1
 
                 elif element_type == "table":
                     self._add_table_element(slide, element_data, left, top, width, height, slide_number)
-                    current_element_index += 1
+                    current_element_index_for_stacking += 1
 
                 elif element_type == "chart":
                     self._add_chart_element(slide, element_data, left, top, width, height, slide_number)
-                    current_element_index += 1
+                    current_element_index_for_stacking += 1
 
                 elif element_type == "image_placeholder":
                     self._add_image_placeholder(slide, element_data, left, top, width, height, slide_number)
-                    current_element_index += 1
+                    current_element_index_for_stacking += 1
 
                 else:
-                    logger.warning(f"Slide {slide_number}: Skipping element with unknown type '{element_type}'.")
+                    logger.warning(
+                        f"Slide {slide_number}: Skipping element {i + 1} with unknown type '{element_type}'.")
+                    current_element_index_for_stacking += 1
 
             except Exception as element_err:
-                logger.error(f"Slide {slide_number}: Failed to add element type '{element_type}': {element_err}", exc_info=True)
+                logger.error(
+                    f"Slide {slide_number}: Failed to add element {i + 1} (type '{element_type}'): {element_err}",
+                    exc_info=True)
                 try:
                     error_box = slide.shapes.add_textbox(left, top, width, Inches(0.5))
                     tf = error_box.text_frame
@@ -331,9 +340,9 @@ class PPTXGenerator:
                     p.text = f"Error adding element: {element_type}"
                     p.font.color.rgb = RGBColor(255, 0, 0)
                     p.font.size = Pt(10)
-                except Exception:
-                    pass
-                current_element_index += 1
+                except Exception as err_box_ex:
+                    logger.error(f"Slide {slide_number}: Could not even add error textbox: {err_box_ex}")
+                current_element_index_for_stacking += 1
 
         notes_text = slide_data.get("speaker_notes")
         if notes_text and isinstance(notes_text, str):
@@ -341,6 +350,7 @@ class PPTXGenerator:
                 notes_slide = slide.notes_slide
                 text_frame = notes_slide.notes_text_frame
                 text_frame.clear()
+
                 p = text_frame.paragraphs[0] if text_frame.paragraphs else text_frame.add_paragraph()
                 p.text = notes_text
                 p.font.name = DEFAULT_FONT_NAME
@@ -351,30 +361,98 @@ class PPTXGenerator:
 
     def _get_element_position(self, position_data: Optional[Dict], element_index: int, total_elements: int) -> Tuple[
         Inches, Inches, Inches, Inches]:
-        """ Calculates position based on JSON hint or defaults """
-        default_left = Inches(1.0)
-        default_top = Inches(1.5) + Inches(max(0, element_index - 1) * 2.5) if element_index > 0 else Inches(1.5)
-        default_width = Inches(8.0)
-        default_height = Inches(2.0)
+        """
+        Calculates position based on JSON hint or defaults, with basic two-column layout.
 
-        if total_elements == 1:
-            default_top = Inches(1.5)
-            default_height = Inches(5.5)
+        Args:
+            position_data (Optional[Dict]): Explicit position hints from JSON.
+            element_index (int): The 0-based index of the current element being placed.
+            total_elements (int): The total number of content elements on the slide.
+
+        Returns:
+            Tuple[Inches, Inches, Inches, Inches]: left, top, width, height
+        """
+        logger.debug(f"Calculating position for element {element_index + 1} of {total_elements}.")
 
         if position_data and isinstance(position_data, dict):
             try:
-                left = Inches(float(position_data.get('left_inches', default_left.inches)))
-                top = Inches(float(position_data.get('top_inches', default_top.inches)))
-                width = Inches(float(position_data.get('width_inches', default_width.inches)))
-                height = Inches(float(position_data.get('height_inches', default_height.inches)))
-                logger.debug(
-                    f"Using position override: L={left.inches}, T={top.inches}, W={width.inches}, H={height.inches}")
-                return left, top, width, height
-            except (KeyError, TypeError, ValueError) as pos_err:
-                logger.warning(f"Invalid position data {position_data}: {pos_err}. Using defaults.")
-        else:
-            logger.debug(f"Using default position for element index {element_index} (0-based)")
+                left_in = position_data.get('left_inches')
+                top_in = position_data.get('top_inches')
+                width_in = position_data.get('width_inches')
+                height_in = position_data.get('height_inches')
 
+                if all(isinstance(v, (int, float)) for v in [left_in, top_in, width_in, height_in]):
+                    left = Inches(float(left_in))
+                    top = Inches(float(top_in))
+                    width = Inches(float(width_in))
+                    height = Inches(float(height_in))
+                    logger.debug(
+                        f"Using position override: L={left.inches:.2f}, T={top.inches:.2f}, W={width.inches:.2f}, H={height.inches:.2f}")
+                    return left, top, width, height
+                else:
+                    logger.warning(
+                        f"Incomplete or invalid position override data {position_data}. Falling back to defaults.")
+            except (TypeError, ValueError) as pos_err:
+                logger.warning(
+                    f"Invalid position override data types {position_data}: {pos_err}. Falling back to defaults.")
+
+        # Default Positioning Logic
+        slide_width_inches = 10.0
+        slide_height_inches = 7.5
+        margin_left_inches = 0.5
+        margin_right_inches = 0.5
+        margin_top_inches = 1.5
+        margin_bottom_inches = 0.5
+        column_gap_inches = 0.4
+
+        available_width = slide_width_inches - margin_left_inches - margin_right_inches
+        available_height = slide_height_inches - margin_top_inches - margin_bottom_inches
+
+        if total_elements <= 0:
+            logger.warning("Position calculation called with zero total elements. Returning minimal box.")
+            return Inches(margin_left_inches), Inches(margin_top_inches), Inches(1.0), Inches(1.0)
+
+        elif total_elements == 1:
+            logger.debug("Applying single element full-width layout.")
+            default_left = Inches(margin_left_inches)
+            default_top = Inches(margin_top_inches)
+            default_width = Inches(available_width)
+            default_height = Inches(available_height)
+
+        elif total_elements == 2:
+            logger.debug("Applying basic two-column layout.")
+            col_width = (available_width - column_gap_inches) / 2
+            if col_width <= 0:
+                col_width = available_width / 2
+                column_gap_inches = 0
+
+            if element_index == 0:
+                default_left = Inches(margin_left_inches)
+            else:
+                default_left = Inches(margin_left_inches + col_width + column_gap_inches)
+
+            default_top = Inches(margin_top_inches)
+            default_width = Inches(col_width)
+            default_height = Inches(available_height)
+
+        else:
+            logger.debug(f"Applying vertical stack layout (element {element_index + 1}).")
+            gap_count = total_elements - 1
+            total_gap_height = gap_count * 0.2
+            element_height_inches = max(0.5, (available_height - total_gap_height) / total_elements)
+
+            default_top = Inches(margin_top_inches + element_index * (element_height_inches + 0.2))
+            default_left = Inches(margin_left_inches)
+            default_width = Inches(available_width)
+            default_height = Inches(element_height_inches)
+
+            if default_top.inches + default_height.inches > (slide_height_inches - margin_bottom_inches):
+                default_height = Inches(max(0.5, (slide_height_inches - margin_bottom_inches) - default_top.inches))
+                if default_height.inches <= 0:
+                    default_height = Inches(0.5)
+
+        logger.debug(
+            f"Calculated default position: L={default_left.inches:.2f}, T={default_top.inches:.2f}, W={default_width.inches:.2f}, H={default_height.inches:.2f}")
         return default_left, default_top, default_width, default_height
 
     def _add_text_element(self, slide, element_data, body_placeholder, left, top, width, height, slide_num):
