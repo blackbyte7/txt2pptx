@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+.idea/
+
+logs/
+*.log
+app.log
+
+exports/
+cache/
+/data/python-pptx-documentation.pdf
