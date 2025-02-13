@@ -8,7 +8,4 @@ __pycache__/
 logs/
 *.log
 app.log
-
-exports/
-cache/
 /data/python-pptx-documentation.pdf
