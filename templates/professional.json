@@ -5,11 +5,20 @@
         "background": "#FFFFFF",
         "text": "#2C3E50",
         "accent1": "#3498DB",
-        "accent2": "#2980B9"
+        "accent2": "#2980B9",
+        "text_light": "#7F8C8D"
     },
     "font": {
-        "heading": "Calibri",
-        "body": "Calibri"
+        "heading": {
+            "name": "Calibri",
+            "size": 32,
+            "bold": true
+        },
+        "body": {
+            "name": "Calibri",
+            "size": 14,
+            "bold": false
+        }
     },
     "layouts": {
         "title_slide": 0,

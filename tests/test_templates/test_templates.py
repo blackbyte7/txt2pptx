@@ -11,8 +11,7 @@ TEMPLATE_DIR_NAME = "test_templates_dir"
 def template_manager(tmp_path):
     """Creates a PresentationTemplates instance using a temporary directory."""
     templates_dir = tmp_path / TEMPLATE_DIR_NAME
-    manager = PresentationTemplates(templates_dir=str(templates_dir))
-    return manager
+    return PresentationTemplates(templates_dir=str(templates_dir))
 
 
 @pytest.fixture
@@ -24,36 +23,43 @@ def populated_template_manager(tmp_path):
     creative_path = templates_dir / "creative.json"
 
     if not prof_path.exists():
-        with open(prof_path, "w") as f:
-            json.dump({
-                "name": "professional", "description": "Prof Desc",
-                "colors": {"text": "#111111"}, "font": {"body": "Arial"},
-                "layouts": {"title_slide": 0}
-            }, f)
+        with open(prof_path, "w", encoding="utf-8") as f:
+            json.dump(
+                {
+                    "name": "professional",
+                    "description": "Prof Desc",
+                    "colors": {"text": "#111111"},
+                    "font": {"body": "Arial"},
+                    "layouts": {"title_slide": 0},
+                },
+                f,
+            )
     if not creative_path.exists():
-        with open(creative_path, "w") as f:
-            json.dump({
-                "name": "creative", "description": "Creative Desc",
-                "colors": {"text": "#222222"}, "font": {"body": "Times New Roman"},
-                "layouts": {"title_slide": 0}
-            }, f)
+        with open(creative_path, "w", encoding="utf-8") as f:
+            json.dump(
+                {
+                    "name": "creative",
+                    "description": "Creative Desc",
+                    "colors": {"text": "#222222"},
+                    "font": {"body": "Times New Roman"},
+                    "layouts": {"title_slide": 0},
+                },
+                f,
+            )
 
-    # Init manager *after* files potentially created
-    manager = PresentationTemplates(templates_dir=str(templates_dir))
-    return manager
+    return PresentationTemplates(templates_dir=str(templates_dir))
 
 
 def test_init_creates_default_files(tmp_path):
     """Test if __init__ creates default JSON files if they don't exist."""
     templates_dir = tmp_path / TEMPLATE_DIR_NAME
     assert not templates_dir.exists()
-    manager = PresentationTemplates(templates_dir=str(templates_dir))
+    PresentationTemplates(templates_dir=str(templates_dir))
     assert templates_dir.exists()
     assert (templates_dir / "professional.json").exists()
     assert (templates_dir / "creative.json").exists()
 
-    # Check content (basic check)
-    with open(templates_dir / "professional.json", 'r') as f:
+    with open(templates_dir / "professional.json", "r", encoding="utf-8") as f:
         data = json.load(f)
         assert data["name"] == "professional"
         assert "colors" in data
@@ -65,16 +71,17 @@ def test_init_loads_existing_files(tmp_path):
     templates_dir.mkdir()
     custom_template_path = templates_dir / "custom.json"
     custom_data = {
-        "name": "custom", "description": "My Custom Template",
-        "colors": {"text": "#ABCDEF"}, "font": {"heading": "Comic Sans MS"},
-        "layouts": {"title_slide": 0}
+        "name": "custom",
+        "description": "My Custom Template",
+        "colors": {"text": "#ABCDEF"},
+        "font": {"heading": "Comic Sans MS"},
+        "layouts": {"title_slide": 0},
     }
-    with open(custom_template_path, 'w') as f:
+    with open(custom_template_path, "w", encoding="utf-8") as f:
         json.dump(custom_data, f)
 
     manager = PresentationTemplates(templates_dir=str(templates_dir))
-    # Should load default AND custom
-    loaded_names = [t['name'] for t in manager.list_templates()]
+    loaded_names = [t["name"] for t in manager.list_templates()]
     assert "professional" in loaded_names
     assert "creative" in loaded_names
     assert "custom" in loaded_names
@@ -89,15 +96,15 @@ def test_list_templates(populated_template_manager):
     """Test listing available templates."""
     templates = populated_template_manager.list_templates()
     assert isinstance(templates, list)
-    assert len(templates) >= 2  # professional and creative
-    names = [t['name'] for t in templates]
+    assert len(templates) >= 2
+    names = [t["name"] for t in templates]
     assert "professional" in names
     assert "creative" in names
     assert all("name" in t and "description" in t for t in templates)
 
 
 def test_get_template_found(populated_template_manager):
-    """Test getting an existing template."""
+    """Test getting an existing template returns a deep copy."""
     template = populated_template_manager.get_template("professional")
     assert template is not None
     assert isinstance(template, dict)
@@ -123,14 +130,14 @@ def test_add_template_new(template_manager):
         "description": "A brand new template",
         "colors": {"background": "#000000"},
         "font": {"body": "Impact"},
-        "layouts": {"default": 6}
+        "layouts": {"default": 6},
     }
     success = template_manager.add_template("new_one", new_template_data)
     assert success is True
 
     new_file = templates_dir / "new_one.json"
     assert new_file.exists()
-    with open(new_file, 'r') as f:
+    with open(new_file, "r", encoding="utf-8") as f:
         saved_data = json.load(f)
         assert saved_data["name"] == "new_one"
         assert saved_data["description"] == "A brand new template"
@@ -143,23 +150,30 @@ def test_add_template_new(template_manager):
 
 def test_add_template_overwrite_false(populated_template_manager):
     """Test adding a template that exists without overwrite."""
-    success = populated_template_manager.add_template("professional", {"description": "Attempt Overwrite"})
+    success = populated_template_manager.add_template(
+        "professional", {"description": "Attempt Overwrite"}
+    )
     assert success is False
     # Verify original data wasn't overwritten
     template = populated_template_manager.get_template("professional")
-    assert template["description"] != "Attempt Overwrite"  # Should retain original description
+    assert template["description"] != "Attempt Overwrite"
 
 
 def test_add_template_overwrite_true(populated_template_manager):
     """Test adding a template that exists with overwrite."""
     templates_dir = populated_template_manager.templates_dir
-    new_data = {"description": "Successfully Overwritten", "colors": {"text": "#FFFFFF"}}
-    success = populated_template_manager.add_template("professional", new_data, overwrite=True)
+    new_data = {
+        "description": "Successfully Overwritten",
+        "colors": {"text": "#FFFFFF"},
+    }
+    success = populated_template_manager.add_template(
+        "professional", new_data, overwrite=True
+    )
     assert success is True
 
     # Check file saved
     prof_file = templates_dir / "professional.json"
-    with open(prof_file, 'r') as f:
+    with open(prof_file, "r", encoding="utf-8") as f:
         saved_data = json.load(f)
         assert saved_data["description"] == "Successfully Overwritten"
         assert saved_data["colors"]["text"] == "#FFFFFF"
@@ -174,26 +188,40 @@ def test_customize_template_found(populated_template_manager):
     modifications = {
         "colors": {"accent1": "#FF0000", "new_color": "#00FF00"},
         "font": {"heading": "Impact"},
-        "layouts": {"title_slide": 1},  # Change existing layout index
-        "new_section": {"info": "test"}  # Add new top-level key
+        "layouts": {"title_slide": 1},
+        "new_section": {"info": "test"},
     }
-    custom_template = populated_template_manager.customize_template("professional", modifications)
+    custom_template = populated_template_manager.customize_template(
+        "professional", modifications
+    )
 
     assert custom_template is not None
-    assert custom_template["name"] == "professional_custom"  # Name reflects customization
-    # Check merged/overwritten values
-    assert custom_template["colors"]["accent1"] == "#FF0000"  # Overwritten
-    assert custom_template["colors"]["text"] == "#111111"  # Original retained
-    assert custom_template["colors"]["new_color"] == "#00FF00"  # New added
-    assert custom_template["font"]["heading"] == "Impact"  # Overwritten
-    assert custom_template["font"]["body"] == "Arial"  # Original retained
-    assert custom_template["layouts"]["title_slide"] == 1  # Overwritten
-    assert custom_template["new_section"]["info"] == "test"  # New section added
+    assert custom_template["name"] == "professional_custom"
+    assert custom_template["colors"]["accent1"] == "#FF0000"
+    assert custom_template["colors"]["text"] == "#111111"
+    assert custom_template["colors"]["new_color"] == "#00FF00"
+    assert custom_template["font"]["heading"] == "Impact"
+    assert custom_template["font"]["body"] == "Arial"
+    assert custom_template["layouts"]["title_slide"] == 1
+    assert custom_template["new_section"]["info"] == "test"
+
+
+def test_customize_template_nested_font_dict(template_manager):
+    """Verifies that customizing a dict-based font with a string updates its 'name' key while preserving size/bold."""
+    custom_template = template_manager.customize_template(
+        "professional", {"font": {"heading": "Georgia"}}
+    )
+    assert custom_template is not None
+    assert custom_template["font"]["heading"]["name"] == "Georgia"
+    assert custom_template["font"]["heading"]["size"] == 32
+    assert custom_template["font"]["heading"]["bold"] is True
 
 
 def test_customize_template_not_found(populated_template_manager):
     """Test customizing a non-existent template."""
-    custom_template = populated_template_manager.customize_template("non_existent", {"colors": {"text": "#000"}})
+    custom_template = populated_template_manager.customize_template(
+        "non_existent", {"colors": {"text": "#000"}}
+    )
     assert custom_template is None
 
 
@@ -203,11 +231,8 @@ def test_get_template_preview(populated_template_manager):
     assert preview is not None
     assert preview["name"] == "professional"
     assert "description" in preview
-    assert "sample_colors" in preview
     assert isinstance(preview["sample_colors"], list)
-    assert "fonts" in preview
     assert isinstance(preview["fonts"], dict)
-    assert "sample_layout_keys" in preview
     assert isinstance(preview["sample_layout_keys"], list)
 
 

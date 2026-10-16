@@ -1,21 +1,32 @@
+import logging
 import os
 import sys
 from pathlib import Path
-import logging
-from typing import Optional, List
+from typing import List, Optional
+
 from dotenv import load_dotenv
 from langchain_core.documents import Document
-from log_config.logging_config import setup_logging, logger
+
 from app.utils import load_supported_documents
+from log_config.logging_config import logger, setup_logging
 from templates.templates import PresentationTemplates
 from view.gradio_ui import launch_interface
+
+PLACEHOLDER_KEYS = {"01010101", "your_secret_key", "your_anthropic_api_key", "key", ""}
+
+
+def _clean_api_key(raw_key: Optional[str]) -> Optional[str]:
+    if not raw_key:
+        return None
+    stripped = raw_key.strip()
+    return None if stripped in PLACEHOLDER_KEYS else stripped
 
 
 def main():
     """Main function to configure and launch the application."""
 
     try:
-        env_path = Path(__file__).parent / 'environment.env'
+        env_path = Path(__file__).parent / "environment.env"
         if env_path.exists():
             logger.info(f"Loading environment variables from {env_path}")
             load_dotenv(dotenv_path=env_path)
@@ -23,20 +34,17 @@ def main():
             logger.info(f"'environment.env' file not found at {env_path}. Using system environment variables.")
             load_dotenv()
 
-        log_level_from_env = os.getenv('LOG_LEVEL', 'INFO')
-
+        log_level_from_env = os.getenv("LOG_LEVEL", "INFO")
         setup_logging(log_level_from_env)
         logger.info(f"Logger configured to level: {logging.getLevelName(logger.level)}")
 
-        openai_api_key = os.getenv("OPENAI_API_KEY")
-        anthropic_api_key = os.getenv("ANTHROPIC_API_KEY")
+        openai_api_key = _clean_api_key(os.getenv("OPENAI_API_KEY"))
+        anthropic_api_key = _clean_api_key(os.getenv("ANTHROPIC_API_KEY"))
 
         if not openai_api_key and not anthropic_api_key:
-            logger.error("Missing API Key: Set either OPENAI_API_KEY or ANTHROPIC_API_KEY in your environment or .env file.")
-            print("\nERROR: Missing API Key. Please set OPENAI_API_KEY or ANTHROPIC_API_KEY.\n", file=sys.stderr)
-            sys.exit(1)
-        else:
-            logger.info(f"Found API keys: OpenAI={'Yes' if openai_api_key else 'No'}, Anthropic={'Yes' if anthropic_api_key else 'No'}")
+            logger.warning(
+                "No valid API key found in environment. Users must enter an API key in the Gradio UI."
+            )
 
         template_manager = PresentationTemplates()
         available_templates = template_manager.list_templates()
@@ -49,17 +57,14 @@ def main():
         loaded_docs: Optional[List[Document]] = None
         if docs_path_str:
             docs_path = Path(docs_path_str)
-            logger.info(f"Attempting to load documentation for RAG from: {docs_path}")
-            if not docs_path.exists():
-                logger.warning(f"Documentation file not found at specified DOCS_PATH: {docs_path}")
-            else:
+            if docs_path.exists():
                 try:
                     loaded_docs = load_supported_documents(docs_path)
-                    logger.info(f"Successfully loaded {len(loaded_docs)} document parts from {docs_path}")
+                    logger.info(f"Loaded {len(loaded_docs)} document chunks from {docs_path}")
                 except Exception as e:
                     logger.error(f"Error loading documentation from {docs_path}: {e}", exc_info=True)
-        else:
-            logger.info("DOCS_PATH not set in environment. Skipping documentation loading for RAG.")
+            else:
+                logger.warning(f"Documentation file not found at DOCS_PATH: {docs_path}")
 
         logger.info("Preparing to launch Gradio interface...")
         launch_interface(
@@ -70,7 +75,7 @@ def main():
         )
 
     except Exception as e:
-        logger.critical(f"An unhandled error occurred during application startup: {e}", exc_info=True)
+        logger.critical(f"Unhandled error during application startup: {e}", exc_info=True)
         print(f"\nFATAL STARTUP ERROR: {e}\n", file=sys.stderr)
         sys.exit(1)
 

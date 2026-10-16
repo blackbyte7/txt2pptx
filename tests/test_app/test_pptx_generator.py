@@ -1,13 +1,18 @@
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, call, patch
+
 import pytest
 from pptx.dml.color import RGBColor
 from pptx.enum.chart import XL_CHART_TYPE, XL_LEGEND_POSITION
-from pptx.enum.shapes import MSO_AUTO_SHAPE_TYPE
 from pptx.enum.dml import MSO_LINE_DASH_STYLE
+from pptx.enum.shapes import MSO_AUTO_SHAPE_TYPE
 from pptx.util import Inches, Pt
 
-from app.pptx_generator import PPTXGenerator, DEFAULT_FONT_NAME, DEFAULT_COLOR, DEFAULT_FONT_SIZE
-from tests.conftest import sample_template_data, sample_detailed_presentation_json
+from app.pptx_generator import (
+    DEFAULT_COLOR,
+    DEFAULT_FONT_NAME,
+    DEFAULT_FONT_SIZE,
+    PPTXGenerator,
+)
 
 
 @pytest.fixture
@@ -64,7 +69,7 @@ def test_get_font_props(generator):
 
     body_level1_props = generator._get_font_props("body", level=1)
     assert body_level1_props["name"] == "Calibri"
-    assert body_level1_props["size"] == Pt(10)  # 12 - 1*2
+    assert body_level1_props["size"] == Pt(10)
 
     unknown_props = generator._get_font_props("unknown_role")
     assert unknown_props["name"] == DEFAULT_FONT_NAME
@@ -76,22 +81,41 @@ def test_get_font_props(generator):
     assert bad_size_props["size"] == DEFAULT_FONT_SIZE
 
 
-@patch('app.pptx_generator.Presentation')
-def test_create_presentation_from_json_success(mock_Presentation, generator, sample_detailed_presentation_json,
-                                               mock_pptx_presentation):
-    """ Test successful presentation creation """
+def test_get_font_props_with_string_font_config():
+    """Verifies that templates specifying fonts as plain strings do not raise AttributeError."""
+    str_font_template = {
+        "name": "legacy_creative",
+        "font": {"heading": "Helvetica Neue", "body": "Helvetica"},
+    }
+    gen = PPTXGenerator(template=str_font_template)
+    heading_props = gen._get_font_props("heading")
+    body_props = gen._get_font_props("body")
+
+    assert heading_props["name"] == "Helvetica Neue"
+    assert heading_props["size"] == Pt(32)
+    assert heading_props["bold"] is True
+    assert body_props["name"] == "Helvetica"
+    assert body_props["size"] == DEFAULT_FONT_SIZE
+
+
+@patch("app.pptx_generator.Presentation")
+def test_create_presentation_from_json_success(
+    mock_Presentation, generator, sample_detailed_presentation_json, mock_pptx_presentation
+):
     mock_Presentation.return_value = mock_pptx_presentation
 
     json_input = sample_detailed_presentation_json.copy()
-    del json_input["template_info"]
+    json_input.pop("template_info", None)
     prs = generator.create_presentation_from_json(json_input)
 
     assert prs is mock_pptx_presentation
     mock_Presentation.assert_called_once()
-    assert mock_pptx_presentation.slides.add_slide.call_count == len(sample_detailed_presentation_json["slides"])
+    assert mock_pptx_presentation.slides.add_slide.call_count == len(
+        sample_detailed_presentation_json["slides"]
+    )
 
 
-@patch('app.pptx_generator.Presentation')
+@patch("app.pptx_generator.Presentation")
 def test_create_presentation_invalid_input(mock_Presentation, generator):
     assert generator.create_presentation_from_json(None) is None
     assert generator.create_presentation_from_json({"wrong_key": []}) is None
@@ -99,14 +123,16 @@ def test_create_presentation_invalid_input(mock_Presentation, generator):
     mock_Presentation.assert_not_called()
 
 
-@patch('app.pptx_generator.Presentation')
-def test_create_presentation_no_layouts(mock_Presentation, generator, sample_detailed_presentation_json):
+@patch("app.pptx_generator.Presentation")
+def test_create_presentation_no_layouts(
+    mock_Presentation, generator, sample_detailed_presentation_json
+):
     mock_pres = MagicMock()
     mock_pres.slide_layouts = []
     mock_Presentation.return_value = mock_pres
 
     json_input = sample_detailed_presentation_json.copy()
-    del json_input["template_info"]
+    json_input.pop("template_info", None)
 
     assert generator.create_presentation_from_json(json_input) is None
     mock_Presentation.assert_called_once()
@@ -115,34 +141,52 @@ def test_create_presentation_no_layouts(mock_Presentation, generator, sample_det
 def test_add_slide_layout_selection(generator, mock_pptx_presentation, mock_pptx_slide):
     """ Test selecting the correct layout index """
     mock_pptx_presentation.slides.add_slide.return_value = mock_pptx_slide
-    mock_pptx_presentation.slide_layouts = [MagicMock(name="L0"), MagicMock(name="L1"), MagicMock(name="L2")]
+    mock_pptx_presentation.slide_layouts = [
+        MagicMock(name="L0"),
+        MagicMock(name="L1"),
+        MagicMock(name="L2"),
+    ]
 
-    # Case 1: Layout key exists in map
-    slide_data_1 = {"slide_type": "content", "title": "T1",
-                    "design_elements": {"layout": "title_content"}}  # maps to index 1
+    slide_data_1 = {
+        "slide_type": "content",
+        "title": "T1",
+        "design_elements": {"layout": "title_content"},
+    }
     generator._add_slide(mock_pptx_presentation, slide_data_1, 1)
-    mock_pptx_presentation.slides.add_slide.assert_called_with(mock_pptx_presentation.slide_layouts[1])
-    # Case 2: Layout key missing, fallback to slide_type key
-    slide_data_2 = {"slide_type": "section_header", "title": "T2"}  # maps to index 2
+    mock_pptx_presentation.slides.add_slide.assert_called_with(
+        mock_pptx_presentation.slide_layouts[1]
+    )
+
+    slide_data_2 = {"slide_type": "section_header", "title": "T2"}
     generator._add_slide(mock_pptx_presentation, slide_data_2, 2)
-    mock_pptx_presentation.slides.add_slide.assert_called_with(mock_pptx_presentation.slide_layouts[2])
-    # Case 3: Layout key and slide_type key missing, fallback to default
-    slide_data_3 = {"slide_type": "unknown_type", "title": "T3"}  # maps to default (index 1)
+    mock_pptx_presentation.slides.add_slide.assert_called_with(
+        mock_pptx_presentation.slide_layouts[2]
+    )
+
+    slide_data_3 = {"slide_type": "unknown_type", "title": "T3"}
     generator._add_slide(mock_pptx_presentation, slide_data_3, 3)
-    mock_pptx_presentation.slides.add_slide.assert_called_with(mock_pptx_presentation.slide_layouts[1])
-    # Case 4: Suggested layout index out of range
+    mock_pptx_presentation.slides.add_slide.assert_called_with(
+        mock_pptx_presentation.slide_layouts[1]
+    )
+
     generator.layout_map["out_of_range"] = 10
-    slide_data_4 = {"slide_type": "content", "title": "T4", "design_elements": {"layout": "out_of_range"}}
+    slide_data_4 = {
+        "slide_type": "content",
+        "title": "T4",
+        "design_elements": {"layout": "out_of_range"},
+    }
     generator._add_slide(mock_pptx_presentation, slide_data_4, 4)
-    mock_pptx_presentation.slides.add_slide.assert_called_with(mock_pptx_presentation.slide_layouts[0])
+    mock_pptx_presentation.slides.add_slide.assert_called_with(
+        mock_pptx_presentation.slide_layouts[0]
+    )
 
 
-def test_add_slide_title(generator, mock_pptx_presentation, mock_pptx_slide, sample_detailed_presentation_json):
-    """ Test adding title (with and without placeholder) """
+def test_add_slide_title(
+    generator, mock_pptx_presentation, mock_pptx_slide, sample_detailed_presentation_json
+):
     mock_pptx_presentation.slides.add_slide.return_value = mock_pptx_slide
     slide_data = sample_detailed_presentation_json["slides"][0]
     mock_title_shape = mock_pptx_slide.shapes.title
-    assert mock_title_shape is not None
 
     mock_run_for_title_ph = mock_title_shape.text_frame.paragraphs[0].add_run.return_value
     mock_run_for_title_ph.reset_mock()
@@ -166,19 +210,18 @@ def test_add_slide_title(generator, mock_pptx_presentation, mock_pptx_slide, sam
     mock_pptx_slide.shapes.add_textbox.assert_called_once()
 
     assert mock_textbox_tf_instance.add_paragraph.called
-    assert len(mock_textbox_tf_instance.paragraphs) >= 1
     mock_p = mock_textbox_tf_instance.paragraphs[-1]
 
     assert mock_p.add_run.called
-    assert len(mock_p.runs) >= 1
     mock_run_in_list = mock_p.runs[-1]
 
     assert mock_run_in_list.text == slide_data["title"]
     assert mock_run_in_list.font.size == Pt(32)
 
 
-def test_add_slide_notes(generator, mock_pptx_presentation, mock_pptx_slide, sample_detailed_presentation_json):
-    """ Test adding speaker notes """
+def test_add_slide_notes(
+    generator, mock_pptx_presentation, mock_pptx_slide, sample_detailed_presentation_json
+):
     mock_pptx_presentation.slides.add_slide.return_value = mock_pptx_slide
     slide_data = sample_detailed_presentation_json["slides"][0]
 
@@ -193,58 +236,86 @@ def test_add_slide_notes(generator, mock_pptx_presentation, mock_pptx_slide, sam
 def test_add_slide_handles_invalid_elements(generator, mock_pptx_presentation, mock_pptx_slide):
     mock_pptx_presentation.slides.add_slide.return_value = mock_pptx_slide
     slide_data = {
-        "slide_number": 1, "slide_type": "content", "title": "Invalid Elements",
+        "slide_number": 1,
+        "slide_type": "content",
+        "title": "Invalid Elements",
         "content_elements": [
             "not a dict",
             {"element_type": "unknown"},
-            {"element_type": "text"}
-        ]
+            {"element_type": "text"},
+        ],
     }
     generator._add_slide(mock_pptx_presentation, slide_data, 1)
 
 
 def test_add_text_element(generator, mock_pptx_slide):
     text_data_bullets = {"element_type": "text", "bullet_points": ["Point 1", "Point 2"]}
-    text_data_title_bullets = {"element_type": "text", "title": "Subsection", "bullet_points": ["Sub Point A"]}
+    text_data_title_bullets = {
+        "element_type": "text",
+        "title": "Subsection",
+        "bullet_points": ["Sub Point A"],
+    }
     text_data_empty = {"element_type": "text"}
 
     mock_body_ph = mock_pptx_slide.placeholders[1]
 
-    # Case 1: Bullets only, using placeholder
     mock_body_ph.text_frame.reset_mock()
-    generator._add_text_element(mock_pptx_slide, text_data_bullets, mock_body_ph, Inches(1), Inches(1.5), Inches(8), Inches(5), 1)
+    generator._add_text_element(
+        mock_pptx_slide,
+        text_data_bullets,
+        mock_body_ph,
+        Inches(1),
+        Inches(1.5),
+        Inches(8),
+        Inches(5),
+        1,
+    )
     mock_body_ph.text_frame.add_paragraph.assert_has_calls([call(), call()])
     paras = mock_body_ph.text_frame.add_paragraph.return_value
     assert paras.text == "Point 2"
     assert paras.level == 1
-    # Case 2: Title + Bullets, new textbox
+
     mock_pptx_slide.shapes.add_textbox.reset_mock()
-    generator._add_text_element(mock_pptx_slide, text_data_title_bullets, None, Inches(1), Inches(4), Inches(8), Inches(2), 1)
+    generator._add_text_element(
+        mock_pptx_slide,
+        text_data_title_bullets,
+        None,
+        Inches(1),
+        Inches(4),
+        Inches(8),
+        Inches(2),
+        1,
+    )
     mock_pptx_slide.shapes.add_textbox.assert_called_once()
     new_tf = mock_pptx_slide.shapes.add_textbox.return_value.text_frame
     assert new_tf.add_paragraph.call_count == 2
-    # Case 3: Empty element (should not add paragraphs)
+
     mock_body_ph.text_frame.reset_mock()
-    generator._add_text_element(mock_pptx_slide, text_data_empty, mock_body_ph, Inches(1), Inches(1.5), Inches(8), Inches(5), 1)
+    generator._add_text_element(
+        mock_pptx_slide,
+        text_data_empty,
+        mock_body_ph,
+        Inches(1),
+        Inches(1.5),
+        Inches(8),
+        Inches(5),
+        1,
+    )
     mock_body_ph.text_frame.add_paragraph.assert_not_called()
 
 
-@patch('app.pptx_generator.Inches', lambda x: x * 914400)
+@patch("app.pptx_generator.Inches", lambda x: x * 914400)
 def test_add_table_element(generator, mock_pptx_slide, sample_detailed_presentation_json):
     table_data = sample_detailed_presentation_json["slides"][1]["content_elements"][0]
-    assert table_data["element_type"] == "table"
-
     mock_add_table = mock_pptx_slide.shapes.add_table
-    # mock_add_table.reset_mock() # Resetting this might clear the return_value setup
     mock_table_obj = mock_add_table.return_value.table
     mock_cell_func = mock_table_obj.cell
     mock_pptx_slide.shapes.add_textbox.reset_mock()
 
-    generator._add_table_element(mock_pptx_slide, table_data, Inches(1), Inches(1.5), Inches(8), Inches(3), 2)
+    generator._add_table_element(
+        mock_pptx_slide, table_data, Inches(1), Inches(1.5), Inches(8), Inches(3), 2
+    )
 
-    num_rows = len(table_data["rows"]) + 1
-    num_cols = len(table_data["headers"])
-    # mock_add_table.assert_called_once_with(num_rows, num_cols, Inches(1), Inches(1.5) + Inches(0.4), Inches(8), Inches(3) - Inches(0.4))
     mock_add_table.assert_called_once()
 
     mock_pptx_slide.shapes.add_textbox.assert_called_once()
@@ -252,28 +323,37 @@ def test_add_table_element(generator, mock_pptx_slide, sample_detailed_presentat
     mock_cell_func.assert_any_call(1, 0)
 
 
-@patch('app.pptx_generator.CategoryChartData')
-@patch('app.pptx_generator.Inches', lambda x: x * 914400)
-def test_add_chart_element(mock_ChartData, generator, mock_pptx_slide, sample_detailed_presentation_json):
+@patch("app.pptx_generator.CategoryChartData")
+@patch("app.pptx_generator.Inches", lambda x: x * 914400)
+def test_add_chart_element(
+    mock_ChartData, generator, mock_pptx_slide, sample_detailed_presentation_json
+):
     chart_data_json = sample_detailed_presentation_json["slides"][2]["content_elements"][0]
-    assert chart_data_json["element_type"] == "chart"
-
     mock_add_chart = mock_pptx_slide.shapes.add_chart
     mock_add_chart.reset_mock()
     mock_chart_data_instance = mock_ChartData.return_value
     mock_chart_obj = mock_add_chart.return_value.chart
 
-    generator._add_chart_element(mock_pptx_slide, chart_data_json, Inches(1), Inches(1.5), Inches(8), Inches(4), 3)
+    generator._add_chart_element(
+        mock_pptx_slide, chart_data_json, Inches(1), Inches(1.5), Inches(8), Inches(4), 3
+    )
 
     mock_ChartData.assert_called_once()
     assert mock_chart_data_instance.categories == chart_data_json["categories"]
-    mock_chart_data_instance.add_series.assert_has_calls([
-        call('Product A', [1500.0, 1200.0, 1800.0, 1350.0]),
-        call('Product B', [800.0, 950.0, 700.0, 880.0])
-    ], any_order=True)
-
+    mock_chart_data_instance.add_series.assert_has_calls(
+        [
+            call("Product A", [1500.0, 1200.0, 1800.0, 1350.0]),
+            call("Product B", [800.0, 950.0, 700.0, 880.0]),
+        ],
+        any_order=True,
+    )
     mock_add_chart.assert_called_once_with(
-        XL_CHART_TYPE.BAR_CLUSTERED, Inches(1), Inches(1.5), Inches(8), Inches(4), mock_chart_data_instance
+        XL_CHART_TYPE.BAR_CLUSTERED,
+        Inches(1),
+        Inches(1.5),
+        Inches(8),
+        Inches(4),
+        mock_chart_data_instance,
     )
 
     assert mock_chart_obj.has_title is True
@@ -282,15 +362,17 @@ def test_add_chart_element(mock_ChartData, generator, mock_pptx_slide, sample_de
     assert mock_chart_obj.legend.position == XL_LEGEND_POSITION.BOTTOM
 
 
-def test_add_image_placeholder_element(generator, mock_pptx_slide, sample_detailed_presentation_json):
+def test_add_image_placeholder_element(
+    generator, mock_pptx_slide, sample_detailed_presentation_json
+):
     img_data = sample_detailed_presentation_json["slides"][3]["content_elements"][1]
-    assert img_data["element_type"] == "image_placeholder"
-
     mock_add_shape = mock_pptx_slide.shapes.add_shape
     mock_add_shape.reset_mock()
     mock_shape_obj = mock_add_shape.return_value
 
-    generator._add_image_placeholder(mock_pptx_slide, img_data, Inches(7), Inches(5), Inches(2), Inches(1), 4)
+    generator._add_image_placeholder(
+        mock_pptx_slide, img_data, Inches(7), Inches(5), Inches(2), Inches(1), 4
+    )
 
     mock_add_shape.assert_called_once_with(
         MSO_AUTO_SHAPE_TYPE.RECTANGLE, Inches(7), Inches(5), Inches(2), Inches(1)

@@ -4,8 +4,13 @@ __pycache__/
 .pytest_cache/
 
 .idea/
+.vscode/
+.env
+environment.env
 
 logs/
 *.log
 app.log
+exports/
+cache/
 /data/python-pptx-documentation.pdf

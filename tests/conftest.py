@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 import pytest
 from pptx.util import Pt
 
-from app.tools import GeneratedCodeOutput, CodeQualityAnalysisOutput, CodeQualityAnalysisOutput
+from app.tools import CodeQualityAnalysisOutput, GeneratedCodeOutput
 
 
 @pytest.fixture(scope="session")
@@ -49,14 +49,25 @@ def sample_template_data() -> dict:
         },
         "font": {
             "heading": {"name": "Calibri", "size": 32, "bold": True},
-            "body": {"name": "Calibri", "size": 12}
+            "body": {"name": "Calibri", "size": 12},
         },
         "layouts": {
-            "title_slide": 0, "title_content": 1, "section_header": 2,
-            "two_content": 3, "comparison": 4, "title_only": 5, "blank": 6,
-            "content_with_caption": 7, "picture_with_caption": 8,
-            "opening": 0, "content": 1, "closing": 1, "table": 1, "chart": 1, "default": 1,
-        }
+            "title_slide": 0,
+            "title_content": 1,
+            "section_header": 2,
+            "two_content": 3,
+            "comparison": 4,
+            "title_only": 5,
+            "blank": 6,
+            "content_with_caption": 7,
+            "picture_with_caption": 8,
+            "opening": 0,
+            "content": 1,
+            "closing": 1,
+            "table": 1,
+            "chart": 1,
+            "default": 1,
+        },
     }
 
 
@@ -69,7 +80,7 @@ def sample_detailed_presentation_json(sample_template_data) -> dict:
             "target_audience": "Technical Team",
             "complexity_level": "intermediate",
             "presentation_style": "Professional",
-            "template_name": "professional"
+            "template_name": "professional",
         },
         "slides": [
             {
@@ -81,12 +92,12 @@ def sample_detailed_presentation_json(sample_template_data) -> dict:
                         "element_type": "text",
                         "bullet_points": [
                             "Ensuring reliability and accuracy of AI models",
-                            "Overcoming challenges like non-determinism"
-                        ]
+                            "Overcoming challenges like non-determinism",
+                        ],
                     }
                 ],
                 "design_elements": {"layout": "title_slide"},
-                "speaker_notes": "Start with the importance of the topic."
+                "speaker_notes": "Start with the importance of the topic.",
             },
             {
                 "slide_number": 2,
@@ -101,16 +112,18 @@ def sample_detailed_presentation_json(sample_template_data) -> dict:
                             ["North", 1500, 800],
                             ["South", 1200, 950],
                             ["East", 1800, 700],
-                            ["West", 1350, 880]
+                            ["West", 1350, 880],
                         ],
                         "position": {
-                            "left_inches": 1.0, "top_inches": 1.5,
-                            "width_inches": 8.0, "height_inches": 3.0
-                        }
+                            "left_inches": 1.0,
+                            "top_inches": 1.5,
+                            "width_inches": 8.0,
+                            "height_inches": 3.0,
+                        },
                     }
                 ],
                 "design_elements": {"layout": "title_content"},
-                "speaker_notes": "Highlight East region's performance for Product A."
+                "speaker_notes": "Highlight East region's performance for Product A.",
             },
             {
                 "slide_number": 3,
@@ -124,12 +137,12 @@ def sample_detailed_presentation_json(sample_template_data) -> dict:
                         "categories": ["North", "South", "East", "West"],
                         "series": {
                             "Product A": [1500, 1200, 1800, 1350],
-                            "Product B": [800, 950, 700, 880]
-                        }
+                            "Product B": [800, 950, 700, 880],
+                        },
                     }
                 ],
                 "design_elements": {"layout": "title_only"},
-                "speaker_notes": "Visual comparison emphasizes differences."
+                "speaker_notes": "Visual comparison emphasizes differences.",
             },
             {
                 "slide_number": 4,
@@ -138,19 +151,21 @@ def sample_detailed_presentation_json(sample_template_data) -> dict:
                 "content_elements": [
                     {
                         "element_type": "text",
-                        "bullet_points": ["Discuss future steps."]
+                        "bullet_points": ["Discuss future steps."],
                     },
                     {
                         "element_type": "image_placeholder",
                         "description": "Company Logo",
                         "position": {
-                            "left_inches": 7.0, "top_inches": 5.0,
-                            "width_inches": 2.0, "height_inches": 1.0
-                        }
-                    }
+                            "left_inches": 7.0,
+                            "top_inches": 5.0,
+                            "width_inches": 2.0,
+                            "height_inches": 1.0,
+                        },
+                    },
                 ],
                 "design_elements": {"layout": "title_content"},
-                "speaker_notes": "Remember to insert logo later."
+                "speaker_notes": "Remember to insert logo later.",
             },
             {
                 "slide_number": 5,
@@ -162,15 +177,15 @@ def sample_detailed_presentation_json(sample_template_data) -> dict:
                         "bullet_points": [
                             "AI testing is crucial for reliable systems.",
                             "Future work: Adversarial testing.",
-                            "Contact: test@example.com"
-                        ]
+                            "Contact: test@example.com",
+                        ],
                     }
                 ],
                 "design_elements": {"layout": "title_content"},
-                "speaker_notes": "End with a call to action or summary."
-            }
+                "speaker_notes": "End with a call to action or summary.",
+            },
         ],
-        "template_info": sample_template_data
+        "template_info": sample_template_data,
     }
 
 
@@ -199,8 +214,9 @@ def mock_embeddings():
 
 @pytest.fixture
 def mock_vector_store():
-    """Provides a mock VectorStore."""
-    mock = MagicMock(spec=["as_retriever", "similarity_search", "add_documents", "from_documents"])
+    mock = MagicMock(
+        spec=["as_retriever", "similarity_search", "add_documents", "from_documents", "save_local", "load_local"]
+    )
     mock.from_documents.return_value = mock
     return mock
 
@@ -209,8 +225,21 @@ def mock_vector_store():
 def mock_agent_runnable():
     """Provides a mock agent runnable (like the output of create_react_agent)."""
     mock = MagicMock(spec=["invoke"])
-    mock.invoke.return_value = {"output": json.dumps({"metadata": {}, "slides": [
-        {"slide_number": 1, "title": "Mock Slide", "content_elements": [], "design_elements": {}}]})}
+    mock.invoke.return_value = {
+        "output": json.dumps(
+            {
+                "metadata": {},
+                "slides": [
+                    {
+                        "slide_number": 1,
+                        "title": "Mock Slide",
+                        "content_elements": [],
+                        "design_elements": {},
+                    }
+                ],
+            }
+        )
+    }
     return mock
 
 
@@ -219,14 +248,7 @@ def mock_pptx_presentation(mock_pptx_slide):
     """ Mocks the pptx.Presentation object """
     mock_pres = MagicMock(name="Presentation")
     mock_pres.slides = MagicMock(name="Slides")
-    mock_pres.slide_layouts = [
-        MagicMock(name="Layout_0"), MagicMock(name="Layout_1"),
-        MagicMock(name="Layout_2"), MagicMock(name="Layout_3"),
-        MagicMock(name="Layout_4"), MagicMock(name="Layout_5"),
-        MagicMock(name="Layout_6"), MagicMock(name="Layout_7"),
-        MagicMock(name="Layout_8")
-    ]
-
+    mock_pres.slide_layouts = [MagicMock(name=f"Layout_{i}") for i in range(9)]
     mock_pres.slides.add_slide.return_value = mock_pptx_slide
     return mock_pres
 
@@ -249,12 +271,10 @@ def mock_pptx_slide():
     mock_title_para.font = MagicMock(size=Pt(10))
     mock_title_para.runs = []
 
-    mock_run_for_title = MagicMock(name="TitleRun",
-                                   font=MagicMock(
-                                       size=Pt(32),
-                                       color=MagicMock(rgb=None)
-                                   ))
-
+    mock_run_for_title = MagicMock(
+        name="TitleRun",
+        font=MagicMock(size=Pt(32), color=MagicMock(rgb=None)),
+    )
     mock_title_para.add_run.return_value = mock_run_for_title
     mock_title_ph.text_frame.paragraphs = [mock_title_para]
     mock_slide.shapes.title = mock_title_ph
@@ -264,16 +284,19 @@ def mock_pptx_slide():
     mock_body_ph.text_frame = MagicMock(name="BodyTextFrame")
     mock_body_ph.text_frame.paragraphs = []
 
-    mock_para_for_body = MagicMock(name="BodyParagraph",
-                                   level=1,
-                                   font=MagicMock(color=MagicMock(rgb=None)),
-                                   text="")
+    mock_para_for_body = MagicMock(
+        name="BodyParagraph",
+        level=1,
+        font=MagicMock(color=MagicMock(rgb=None)),
+        text="",
+    )
     mock_body_ph.text_frame.add_paragraph.return_value = mock_para_for_body
     mock_body_ph.is_content_placeholder = True
     mock_body_ph.placeholder_format.idx = 1
     mock_slide.placeholders.__len__.return_value = 2
-    mock_slide.placeholders.__getitem__.side_effect = lambda \
-        idx: mock_body_ph if idx == 1 else mock_title_ph if idx == 0 else MagicMock()
+    mock_slide.placeholders.__getitem__.side_effect = (
+        lambda idx: mock_body_ph if idx == 1 else mock_title_ph if idx == 0 else MagicMock()
+    )
 
     mock_table = MagicMock(name="Table")
     mock_table.columns = MagicMock()
@@ -290,14 +313,18 @@ def mock_pptx_slide():
 
     mock_para_for_textbox = MagicMock(name="TextBoxParagraph")
     mock_para_for_textbox.runs = []
-    mock_run_for_textbox = MagicMock(name="TextBoxRun", text="", font=MagicMock(size=None, color=MagicMock()))
+    mock_run_for_textbox = MagicMock(
+        name="TextBoxRun", text="", font=MagicMock(size=None, color=MagicMock())
+    )
 
     def add_run_side_effect_textbox(*args, **kwargs):
         mock_para_for_textbox.runs.append(mock_run_for_textbox)
         return mock_run_for_textbox
 
     mock_para_for_textbox.add_run.side_effect = add_run_side_effect_textbox
-    mock_para_for_textbox.clear = MagicMock(side_effect=lambda: setattr(mock_para_for_textbox, 'runs', []))
+    mock_para_for_textbox.clear = MagicMock(
+        side_effect=lambda: setattr(mock_para_for_textbox, "runs", [])
+    )
 
     def add_para_side_effect_textbox(*args, **kwargs):
         mock_para_for_textbox.runs = []
@@ -311,16 +338,24 @@ def mock_pptx_slide():
     mock_slide.shapes.add_textbox.return_value = MagicMock(text_frame=mock_textbox_tf)
     mock_slide._mock_textbox_tf = mock_textbox_tf
     mock_slide.shapes.add_chart.return_value = MagicMock(
-        chart=MagicMock(chart_title=MagicMock(text_frame=MagicMock(paragraphs=[MagicMock()])),
-                        legend=MagicMock(),
-                        plots=[MagicMock(has_data_labels=False,
-                                         data_labels=MagicMock(font=MagicMock(color=MagicMock())))]))
+        chart=MagicMock(
+            chart_title=MagicMock(text_frame=MagicMock(paragraphs=[MagicMock()])),
+            legend=MagicMock(),
+            plots=[
+                MagicMock(
+                    has_data_labels=False,
+                    data_labels=MagicMock(font=MagicMock(color=MagicMock())),
+                )
+            ],
+        )
+    )
 
     mock_slide.shapes.add_shape.return_value = MagicMock(
         name="MockedRectangle",
         text_frame=MagicMock(paragraphs=[MagicMock(font=MagicMock(color=MagicMock()))]),
         line=MagicMock(color=MagicMock(), dash_style=None),
-        fill=MagicMock())
+        fill=MagicMock(),
+    )
 
     return mock_slide
 
@@ -345,7 +380,6 @@ import requests
 requests.get('http://example.com')
 from pptx import Presentation
 prs = Presentation()
-# ... rest of pptx code ...
 import os; os.makedirs('exports', exist_ok=True); prs.save(r'exports/unsafe_code_test.pptx')
 """
 
@@ -355,25 +389,29 @@ def mock_code_gen_output(tmp_path) -> str:
     output_file = tmp_path / "exports" / f"test_code_gen_{uuid.uuid4()}.pptx"
     output_file.parent.mkdir(exist_ok=True)
     code_output = GeneratedCodeOutput(
-        python_code="from pptx import Presentation\nprs=Presentation()\n#...\nimport os; "
-                    "os.makedirs('exports', exist_ok=True); prs.save(r'" + str(output_file) + "')",
-        output_filename=str(output_file)
+        python_code=(
+            "from pptx import Presentation\nprs=Presentation()\n"
+            f"import os; os.makedirs('exports', exist_ok=True); prs.save(r'{output_file}')"
+        ),
+        output_filename=str(output_file),
     )
-    return code_output.json(indent=2)
+    return code_output.model_dump_json(indent=2)
 
 
 @pytest.fixture
 def mock_safe_quality_check_output() -> str:
     qc_output = CodeQualityAnalysisOutput(is_safe=True, warnings=[], assessment="Looks safe")
-    return qc_output.json(indent=2)
+    return qc_output.model_dump_json(indent=2)
 
 
 @pytest.fixture
 def mock_unsafe_quality_check_output() -> str:
-    qc_output = CodeQualityAnalysisOutput(is_safe=False, warnings=["Unsafe import detected"], assessment="Unsafe")
-    return qc_output.json(indent=2)
+    qc_output = CodeQualityAnalysisOutput(
+        is_safe=False, warnings=["Unsafe import detected"], assessment="Unsafe"
+    )
+    return qc_output.model_dump_json(indent=2)
 
 
 @pytest.fixture
 def mock_repl_output() -> str:
-    return "REPL execution finished."
+    return "Code execution finished."

@@ -1,7 +1,7 @@
 import copy
 import json
 from pathlib import Path
-from typing import Dict, Optional, List
+from typing import Dict, List, Optional
 
 from log_config.logging_config import logger
 
@@ -19,10 +19,11 @@ class PresentationTemplates:
                     "text": "#2C3E50",
                     "accent1": "#3498DB",
                     "accent2": "#2980B9",
+                    "text_light": "#7F8C8D",
                 },
                 "font": {
-                    "heading": "Calibri",
-                    "body": "Calibri"
+                    "heading": {"name": "Calibri", "size": 32, "bold": True},
+                    "body": {"name": "Calibri", "size": 14, "bold": False},
                 },
                 "layouts": {
                     "title_slide": 0,
@@ -33,9 +34,8 @@ class PresentationTemplates:
                     "title_only": 5,
                     "blank": 6,
                     "content_with_caption": 7,
-                    "picture_with_caption": 8
-                }
-                # "transitions": ["fade", "push", "cover"]
+                    "picture_with_caption": 8,
+                },
             },
             "creative": {
                 "name": "creative",
@@ -45,10 +45,11 @@ class PresentationTemplates:
                     "text": "#5D6D7E",
                     "accent1": "#FF6B6B",
                     "accent2": "#4ECDC4",
+                    "text_light": "#95A5A6",
                 },
                 "font": {
-                    "heading": "Helvetica Neue",
-                    "body": "Helvetica"
+                    "heading": {"name": "Helvetica Neue", "size": 34, "bold": True},
+                    "body": {"name": "Helvetica", "size": 14, "bold": False},
                 },
                 "layouts": {
                     "title_slide": 0,
@@ -59,10 +60,9 @@ class PresentationTemplates:
                     "title_only": 5,
                     "blank": 6,
                     "content_with_caption": 7,
-                    "picture_with_caption": 8
-                }
-                # "transitions": ["wheel", "zoom", "gallery"]
-            }
+                    "picture_with_caption": 8,
+                },
+            },
         }
         self._load_templates()
 
@@ -73,7 +73,7 @@ class PresentationTemplates:
             template_file = self.templates_dir / f"{name}.json"
             if not template_file.exists():
                 try:
-                    with open(template_file, 'w', encoding='utf-8') as f:
+                    with open(template_file, "w", encoding="utf-8") as f:
                         json.dump(template_data, f, indent=4)
                     logger.info(f"Created default template file: {template_file}")
                 except IOError as e:
@@ -81,7 +81,7 @@ class PresentationTemplates:
 
         for file_path in self.templates_dir.glob("*.json"):
             try:
-                with open(file_path, 'r', encoding='utf-8') as f:
+                with open(file_path, "r", encoding="utf-8") as f:
                     template = json.load(f)
                     template_name = file_path.stem
                     if "name" not in template:
@@ -101,7 +101,7 @@ class PresentationTemplates:
         ]
 
     def get_template(self, name: str) -> Optional[Dict]:
-        """Gets a specific template by name."""
+        """Gets a deep copy of a specific template by name."""
         template = self._default_templates.get(name)
         if not template:
             logger.warning(f"Template '{name}' not found.")
@@ -110,58 +110,52 @@ class PresentationTemplates:
 
     def add_template(self, name: str, template_data: Dict, overwrite: bool = False) -> bool:
         """Adds or updates a template and saves it to a JSON file."""
-        template_file = self.templates_dir / f"{name}.json"
+        safe_name = Path(name).stem
+        template_file = self.templates_dir / f"{safe_name}.json"
         if template_file.exists() and not overwrite:
-            logger.error(f"Template '{name}' already exists. Use overwrite=True to replace.")
+            logger.error(f"Template '{safe_name}' already exists. Use overwrite=True to replace.")
             return False
 
         try:
-            template_data["name"] = name
-            with open(template_file, 'w', encoding='utf-8') as f:
-                json.dump(template_data, f, indent=4)
-            self._default_templates[name] = template_data
-            logger.info(f"Saved template '{name}' to {template_file}")
+            data_to_save = copy.deepcopy(template_data)
+            data_to_save["name"] = safe_name
+            with open(template_file, "w", encoding="utf-8") as f:
+                json.dump(data_to_save, f, indent=4)
+            self._default_templates[safe_name] = data_to_save
+            logger.info(f"Saved template '{safe_name}' to {template_file}")
             return True
-        except IOError as e:
-            logger.error(f"Failed to save template '{name}': {e}")
-            return False
-        except TypeError as e:
-            logger.error(f"Invalid data provided for template '{name}': {e}")
+        except (IOError, TypeError) as e:
+            logger.error(f"Failed to save template '{safe_name}': {e}")
             return False
 
     def customize_template(self, base_template_name: str, modifications: Dict) -> Optional[Dict]:
-        """
-        Creates a customized copy of an existing template.
-
-        Args:
-            base_template_name: Name of the template to base the customization on.
-            modifications: Dictionary of changes to apply (e.g., {"colors": {...}}).
-
-        Returns:
-            The customized template dictionary, or None if the base template doesn't exist.
-            Note: This currently doesn't save the custom template permanently.
-        """
+        """Creates a customized in-memory copy of an existing template."""
         base_template = self.get_template(base_template_name)
         if not base_template:
             logger.error(f"Cannot customize: Base template '{base_template_name}' not found.")
             return None
 
-        custom_template = base_template.copy()
+        custom_template = copy.deepcopy(base_template)
         for key, value in modifications.items():
             if isinstance(custom_template.get(key), dict) and isinstance(value, dict):
-                custom_template[key].update(value)
-            elif key in custom_template:
-                custom_template[key] = value
+                for sub_key, sub_val in value.items():
+                    if (
+                        key == "font"
+                        and isinstance(custom_template[key].get(sub_key), dict)
+                        and isinstance(sub_val, str)
+                    ):
+                        custom_template[key][sub_key]["name"] = sub_val
+                    elif (
+                        isinstance(custom_template[key].get(sub_key), dict)
+                        and isinstance(sub_val, dict)
+                    ):
+                        custom_template[key][sub_key].update(sub_val)
+                    else:
+                        custom_template[key][sub_key] = sub_val
             else:
                 logger.warning(
                     f"Customization key '{key}' not found in base template '{base_template_name}', adding it.")
                 custom_template[key] = value
-
-        # timestamp = int(time.time())
-        # custom_name = f"{base_template_name}_custom_{timestamp}"
-        # self.add_template(custom_name, custom_template)
-        # logger.info(f"Created custom template '{custom_name}' based on '{base_template_name}'.")
-        # return self.get_template(custom_name)
 
         logger.info(f"Generated temporary customization based on '{base_template_name}'.")
         custom_template["name"] = f"{base_template_name}_custom"
@@ -173,11 +167,10 @@ class PresentationTemplates:
         if not template:
             return None
 
-        preview = {
+        return {
             "name": template.get("name", name),
             "description": template.get("description", ""),
             "sample_colors": list(template.get("colors", {}).values())[:4],
             "fonts": template.get("font", {}),
             "sample_layout_keys": list(template.get("layouts", {}).keys())[:3],
         }
-        return preview

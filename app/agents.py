@@ -1,29 +1,33 @@
 import json
 import os
-import re
+import subprocess
+import sys
+import tempfile
 from functools import partial
 from pathlib import Path
-from typing import Dict, Any, List, Callable, Optional
+from typing import Any, Callable, Dict, List, Optional
+
 from langchain_anthropic import ChatAnthropic
 from langchain_core.documents import Document
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import SystemMessage
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.retrievers import BaseRetriever
-from langchain_core.runnables import RunnableConfig, Runnable
+from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import BaseTool
-from langchain_experimental.tools import PythonREPLTool
 from langchain_openai import ChatOpenAI
-from langgraph.prebuilt import create_react_agent
+
 from app.rag import EnhancedRAG
 from app.tools import (
-    create_bullet_points_tool,
-    create_quality_check_tool,
-    create_code_generation_tool,
     BulletPointInput,
-    QualityCheckInput,
+    CodeQualityAnalysisOutput,
+    CodeQualityCheckInput,
     GenerateCodeInput,
-    GeneratedCodeOutput, create_code_quality_check_tool, CodeQualityAnalysisOutput, CodeQualityCheckInput
+    GeneratedCodeOutput,
+    QualityCheckInput,
+    create_bullet_points_tool,
+    create_code_generation_tool,
+    create_code_quality_check_tool,
+    create_quality_check_tool,
+    validate_python_code_ast,
 )
 from log_config.logging_config import logger
 
@@ -33,294 +37,262 @@ DEFAULT_LLM_TEMPERATURE = 0.1
 DEFAULT_LLM_MAX_TOKENS = 4096
 
 
-class PresentationAgent:
-    def __init__(self, llm: BaseChatModel, tools: List[BaseTool], retriever: Optional[BaseRetriever] = None):
-        """
-        Initializes the PresentationAgent.
+def _execute_code_safely(python_code: str, timeout_seconds: int = 60) -> str:
+    """Executes AST-validated python-pptx code in an isolated subprocess with stripped credentials."""
+    ast_warnings = validate_python_code_ast(python_code)
+    if ast_warnings:
+        raise PermissionError(f"Blocked execution due to AST security violations: {'; '.join(ast_warnings)}")
 
-        Args:
-            llm (BaseChatModel): The language model instance.
-            tools (List[BaseTool]): The list of tools available to the agent.
-            retriever (Optional[BaseRetriever]): The retriever for RAG context, if available.
-        """
+    safe_env = {
+        k: v
+        for k, v in os.environ.items()
+        if k not in {"OPENAI_API_KEY", "ANTHROPIC_API_KEY"}
+    }
+
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".py", delete=False, encoding="utf-8"
+    ) as tmp_script:
+        tmp_script.write(python_code)
+        script_path = Path(tmp_script.name)
+
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-I", str(script_path)],
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+            env=safe_env,
+            check=False,
+        )
+        output = (proc.stdout or "") + ("\n" + proc.stderr if proc.stderr else "")
+        if proc.returncode != 0:
+            logger.error(f"Subprocess execution failed (exit {proc.returncode}): {output.strip()}")
+        return output.strip() or "Code execution finished."
+    finally:
+        script_path.unlink(missing_ok=True)
+
+
+class PresentationAgent:
+    def __init__(
+        self,
+        llm: BaseChatModel,
+        tools: List[BaseTool],
+        retriever: Optional[BaseRetriever] = None,
+    ):
         self.llm = llm
         self.tools = tools
         self.retriever = retriever
-        self.system_prompt = """You are an expert presentation creation assistant using Python. You have two main ways to generate a presentation:
-
-    1.  **JSON Structure Path (Default):**
-        *   Use the `Bullet_Points_Generator` tool to create a detailed JSON outline.
-        *   Optionally use `Presentation_Quality_Checker` on the JSON if needed.
-        *   This JSON structure will be used by *external code* to generate the actual .pptx file.
-        *   Your final output for this path MUST be the raw JSON string produced by `Bullet_Points_Generator`. No extra text or markdown.
-
-    2.  **Direct Code Generation Path (Use if user requests 'code generation' or 'REPL method'):**
-        *   **Step 1:** Use the `Code_Generator` tool to generate runnable `python-pptx` code. This tool returns JSON containing the code and the target filename.
-        *   **Step 2:** Use the `Code_Quality_Checker` tool to analyze the Python code generated in Step 1. Pass the 'python_code' string to it.
-        *   **Step 3:** ONLY IF the `Code_Quality_Checker` output indicates the code is safe (`is_safe: true`), proceed to use the `PythonREPLTool` to execute that *exact* Python code.
-        *   The `PythonREPLTool` execution is the final step in this path if the code is safe. It creates the .pptx file as a side effect.
-        *   Your final output for this path will be the output of the `PythonREPLTool` (e.g., confirmation or error) if executed, OR the analysis result from `Code_Quality_Checker` if the code was deemed unsafe.
-
-    **Tool Selection:**
-    - If the user input mentions generating "code", "python code", "script", or using the "REPL method", use the **Direct Code Generation Path** (`Code_Generator` -> `Code_Quality_Checker` -> conditionally `PythonREPLTool`).
-    - Otherwise, use the **JSON Structure Path** (`Bullet_Points_Generator`).
-
-    **Input Format:** The user input will specify the content, style, template name, and potentially the desired generation method.
-
-    **Example Interaction (Code Path - Safe Code):**
-    User: Create a presentation using the 'REPL method' from this text... Style: Professional, Template: professional
-    Agent: (Thinking: User requested REPL method. Need Code_Generator -> Code_Quality_Checker -> PythonREPLTool.)
-    Agent -> Code_Generator (content="...", style="Professional", template_name="professional", template_data={...})
-    Tool <- (Returns JSON: {"python_code": "from pptx import Presentation...", "output_filename": "exports/file.pptx"})
-    Agent: (Thinking: Got code. Now check its quality.)
-    Agent -> Code_Quality_Checker (python_code="from pptx import Presentation...")
-    Tool <- (Returns JSON: {"is_safe": true, "warnings": [], "assessment": "Code looks safe."})
-    Agent: (Thinking: Code is safe. Now execute it.)
-    Agent -> PythonREPLTool (code="from pptx import Presentation...")
-    Tool <- (Returns REPL output, e.g., "" or error. File exports/file.pptx is created.)
-    Agent: (Thinking: REPL executed. The REPL output is the final answer.)
-    Agent -> Final Answer: "" (or the REPL error)
-
-    **Example Interaction (Code Path - Unsafe Code):**
-    ...
-    Agent -> Code_Quality_Checker (python_code="import requests; requests.get(...)")
-    Tool <- (Returns JSON: {"is_safe": false, "warnings": ["Imports suspicious library 'requests'"], "assessment": "Code appears unsafe."})
-    Agent: (Thinking: Code is unsafe. Stop here and report the findings.)
-    Agent -> Final Answer: {"is_safe": false, "warnings": ["Imports suspicious library 'requests'"], "assessment": "Code appears unsafe."}
-    """
-        self.prompt = ChatPromptTemplate.from_messages([
-            SystemMessage(content=self.system_prompt),
-            MessagesPlaceholder(variable_name="chat_history"),
-            ("user", "{input}"),
-            MessagesPlaceholder(variable_name="agent_scratchpad")
-        ])
-
-        self.agent_runnable: Runnable = create_react_agent(
-            model=self.llm,
-            tools=self.tools,
-            prompt=self.prompt,
+        self.agent_runnable: Optional[Any] = None
+        logger.info(
+            f"PresentationAgent initialized with LLM: {llm.__class__.__name__} and "
+            f"Tools: {[t.name for t in tools]}."
         )
+
+    def run(
+        self,
+        user_input: str,
+        style: str,
+        template_name: str,
+        template_data: Dict[str, Any],
+        generation_method: str,
+        config: Optional[RunnableConfig] = None,
+    ) -> Dict[str, Any]:
+        """Executes the presentation creation pipeline using the selected method ('json' or 'code')."""
         logger.info(
-            f"PresentationAgent initialized with LLM: {llm.__class__.__name__} and Tools: {[t.name for t in tools]}. "
-            f"RAG Retriever: {'Provided' if retriever else 'Not Provided'}")
+            f"Running PresentationAgent. Method: '{generation_method}', Style: '{style}', Template: '{template_name}'"
+        )
 
-    def run(self,
-            user_input: str,
-            style: str,
-            template_name: str,
-            template_data: Dict[str, Any],
-            generation_method: str,
-            config: Optional[RunnableConfig] = None
-            ) -> Dict[str, Any]:
-        """
-        Executes the presentation creation process using the chosen method.
-
-        Args:
-            user_input (str): Raw text content.
-            style (str): Conceptual style.
-            template_name (str): Specific template name.
-            template_data (Dict): The actual template data dictionary.
-            generation_method (str): 'json' or 'code'.
-            config (Optional[RunnableConfig]): Langchain config.
-
-        Returns:
-            Dict[str, Any]: A dictionary containing:
-                - 'type': 'json' or 'code_execution' or 'error'
-                - 'output': The JSON structure string (for 'json'),
-                            the REPL output string or quality check result (for 'code'),
-                            or an error message string.
-                - 'generated_filename': The path to the created file (for 'code_execution'), if successful.
-        """
-        logger.info(
-            f"Running PresentationAgent. Method: '{generation_method}', Style: '{style}', Template: '{template_name}'")
-
-        agent_input_message = f"""
-        Generate a presentation based on the following details.
-        Chosen Generation Method: {generation_method} {'(Use Code_Generator -> Code_Quality_Checker -> PythonREPLTool)' if generation_method == 'code' else '(Use Bullet_Points_Generator)'}
-        Presentation Style: {style}
-        Visual Template Name: {template_name}
-        Template Data (use this for styling): {json.dumps(template_data, indent=2)}
-
-        Content:
-        ---
-        {user_input}
-        ---
-        Follow the instructions precisely based on the chosen generation method. For the 'code' path, ensure you execute the Code_Quality_Checker step *before* the PythonREPLTool. Only execute the REPL if the code is safe.
-        """
-
-        agent_response = None
         try:
-            agent_input = {"input": agent_input_message, "chat_history": []}
-            effective_config = config or RunnableConfig()
-            logger.debug(f"Invoking agent runnable with input: {json.dumps(agent_input, indent=2)[:1000]}...")
-            agent_response = self.agent_runnable.invoke(agent_input, config=effective_config)
+            # Support mocked agent_runnable if injected during unit tests
+            if self.agent_runnable is not None:
+                return self._run_via_agent_runnable(
+                    user_input=user_input,
+                    style=style,
+                    template_name=template_name,
+                    template_data=template_data,
+                    generation_method=generation_method,
+                    config=config,
+                )
 
-            final_output_content = None
-            intermediate_steps = agent_response.get('intermediate_steps', [])
-            if not intermediate_steps and generation_method == 'code':
-                logger.warning(
-                    "Agent response for 'code' path did not contain 'intermediate_steps'. Cannot verify process.")
-                final_output_content = agent_response.get("output", str(agent_response))
-                return {"type": "error",
-                        "output": f"Agent execution incomplete or failed early (no intermediate steps found). Final output: {final_output_content}"}
+            if generation_method == "json":
+                logger.info("Executing deterministic JSON generation pipeline...")
+                bp_input = BulletPointInput(
+                    content=user_input,
+                    style=style,
+                    template_name=template_name,
+                )
+                raw_json = create_bullet_points_tool(
+                    bp_input, self.llm, self.retriever, config=config
+                )
+                cleaned_json = self._clean_json_output(raw_json)
+                parsed_json = json.loads(cleaned_json)
+                if not isinstance(parsed_json, dict) or "slides" not in parsed_json:
+                    raise ValueError("JSON output is missing 'slides' key or is not a dictionary.")
+                return {"type": "json", "output": cleaned_json}
 
-            if isinstance(agent_response, dict) and "output" in agent_response:
-                final_output_content = agent_response["output"]
-            elif isinstance(agent_response, dict) and "messages" in agent_response and isinstance(
-                    agent_response["messages"], list) and agent_response["messages"]:
-                last_message = agent_response["messages"][-1]
-                if hasattr(last_message, 'content'):
-                    final_output_content = last_message.content
-                elif isinstance(last_message, str):
-                    final_output_content = last_message
-            elif isinstance(agent_response, str):
-                final_output_content = agent_response
+            elif generation_method == "code":
+                logger.info("Executing deterministic Code generation pipeline...")
+                code_input = GenerateCodeInput(
+                    content=user_input,
+                    style=style,
+                    template_name=template_name,
+                    template_data=template_data or {},
+                )
+                code_gen_json = create_code_generation_tool(
+                    code_input, self.llm, self.retriever, config=config
+                )
+                code_gen_data = json.loads(code_gen_json)
+                validated_code_gen = GeneratedCodeOutput(**code_gen_data)
 
-            if not final_output_content:
-                final_output_content = str(agent_response)
+                qc_input = CodeQualityCheckInput(python_code=validated_code_gen.python_code)
+                qc_json = create_code_quality_check_tool(qc_input, self.llm, config=config)
+                qc_data = json.loads(qc_json)
+                validated_qc = CodeQualityAnalysisOutput(**qc_data)
 
-            logger.debug(f"Agent final output content: {final_output_content}")
-            log_intermediate = [
-                (step[0].tool, step[1][:100] + '...' if isinstance(step[1], str) and len(step[1]) > 100 else step[1])
-                for step in intermediate_steps if len(step) == 2 and hasattr(step[0], 'tool')]
-            logger.debug(f"Agent intermediate tool calls (summary): {log_intermediate}")
-
-            if generation_method == 'json':
-                logger.info("Processing 'json' generation path...")
-                cleaned_json_string = self._clean_json_output(final_output_content)
-                try:
-                    parsed_json = json.loads(cleaned_json_string)
-                    if not isinstance(parsed_json, dict) or "slides" not in parsed_json:
-                        raise ValueError("JSON output from agent is missing 'slides' key or is not a dictionary.")
-                    logger.info("Successfully parsed agent's final output as JSON structure.")
-                    return {"type": "json", "output": cleaned_json_string}
-                except (json.JSONDecodeError, ValueError) as json_err:
-                    logger.error(f"Failed to parse final output as JSON for the 'json' method: {json_err}")
-                    logger.error(f"Agent raw output that failed parsing:\n{final_output_content}")
-                    return {"type": "error", "output": f"Agent did not return valid JSON structure: {json_err}"}
-
-            elif generation_method == 'code':
-                logger.info("Processing 'code' generation path...")
-                generated_code: Optional[str] = None
-                generated_filename: Optional[str] = None
-                quality_check_result: Optional[Dict] = None
-                repl_output: Optional[str] = None
-
-                code_generator_output_json = None
-                for step in reversed(intermediate_steps):
-                    if len(step) == 2 and hasattr(step[0], 'tool') and step[0].tool == 'Code_Generator':
-                        code_generator_output_json = step[1]
-                        logger.info(f"Found Code_Generator output observation in intermediate steps.")
-                        break
-
-                if not code_generator_output_json:
-                    logger.error("Code_Generator tool output not found in intermediate steps.")
-                    return {"type": "error", "output": "Agent failed to use the Code_Generator tool."}
-
-                try:
-                    code_gen_data = json.loads(code_generator_output_json)
-                    GeneratedCodeOutput(**code_gen_data)
-                    generated_code = code_gen_data.get('python_code')
-                    generated_filename = code_gen_data.get('output_filename')
-                    if not generated_code or not generated_filename:
-                        raise ValueError("Code_Generator output JSON missing 'python_code' or 'output_filename'.")
-                    logger.info(f"Successfully parsed Code_Generator output. Expected Filename: {generated_filename}")
-                except (json.JSONDecodeError, ValueError, Exception) as parse_err:
-                    logger.error(f"Could not parse or validate Code_Generator output JSON: {parse_err}", exc_info=True)
-                    logger.debug(f"Code Generator Raw Output: {code_generator_output_json}")
-                    return {"type": "error",
-                            "output": f"Failed to parse or validate code generator output: {parse_err}"}
-
-                code_quality_output_json = None
-                for step in reversed(intermediate_steps):
-                    if len(step) == 2 and hasattr(step[0], 'tool') and step[0].tool == 'Code_Quality_Checker':
-                        code_quality_output_json = step[1]
-                        logger.info(f"Found Code_Quality_Checker output observation in intermediate steps.")
-                        break
-
-                if not code_quality_output_json:
-                    logger.error(
-                        "Code_Quality_Checker tool output not found in intermediate steps after Code_Generator.")
-                    return {"type": "error",
-                            "output": "Agent failed to use the Code_Quality_Checker tool after generating code."}
-
-                try:
-                    quality_check_data = json.loads(code_quality_output_json)
-                    CodeQualityAnalysisOutput(**quality_check_data)
-                    quality_check_result = quality_check_data
-                    logger.info(
-                        f"Successfully parsed Code_Quality_Checker output. Safe: {quality_check_result.get('is_safe')}, Assessment: {quality_check_result.get('assessment')}")
-                except (json.JSONDecodeError, ValueError, Exception) as parse_err:
-                    logger.error(f"Could not parse or validate Code_Quality_Checker output JSON: {parse_err}",
-                                 exc_info=True)
-                    logger.debug(f"Code Quality Raw Output: {code_quality_output_json}")
-                    return {"type": "error",
-                            "output": f"Failed to parse or validate code quality checker output: {parse_err}"}
-
-                if not quality_check_result.get('is_safe'):
-                    logger.warning(
-                        f"Code quality check deemed code unsafe. Warnings: {quality_check_result.get('warnings')}")
+                if not validated_qc.is_safe:
                     return {
                         "type": "error",
-                        "output": f"Generated code deemed unsafe or irrelevant by Code Quality Check.\nAssessment:"
-                                  f" {quality_check_result.get('assessment', 'N/A')}\nWarnings: {'; '.join(quality_check_result.get('warnings', []))}"
+                        "output": (
+                            f"Generated code deemed unsafe or irrelevant by Code Quality Check.\n"
+                            f"Assessment: {validated_qc.assessment}\n"
+                            f"Warnings: {'; '.join(validated_qc.warnings)}"
+                        ),
                     }
 
-                logger.info("Code quality check passed. Verifying REPL execution and file existence.")
+                repl_output = _execute_code_safely(validated_code_gen.python_code)
+                generated_filename_path = Path(validated_code_gen.output_filename)
 
-                repl_executed = False
-                qc_step_index = -1
-                for idx, step in enumerate(intermediate_steps):
-                    if len(step) == 2 and hasattr(step[0], 'tool') and step[0].tool == 'Code_Quality_Checker':
-                        qc_step_index = idx
-                        break
-
-                if qc_step_index != -1:
-                    for step in intermediate_steps[qc_step_index + 1:]:
-                        if len(step) == 2 and hasattr(step[0], 'tool') and step[0].tool == 'PythonREPLTool':
-                            repl_executed = True
-                            repl_output = step[1]
-                            logger.info("PythonREPLTool execution step found after quality check.")
-                            break
-
-                if not repl_executed:
-                    logger.warning(
-                        "PythonREPLTool execution step not found in intermediate steps after safety check. "
-                        "Assuming final agent output might be REPL output.")
-                    repl_output = final_output_content
-
-                generated_filename_path = Path(generated_filename)
                 if generated_filename_path.exists():
-                    logger.info(f"Code execution path successful. Confirmed file exists: '{generated_filename}'")
                     return {
                         "type": "code_execution",
-                        "output": repl_output if repl_output is not None else "(REPL Output not captured)",
-                        "generated_filename": str(generated_filename_path.absolute())
+                        "output": repl_output,
+                        "generated_filename": str(generated_filename_path.absolute()),
                     }
-                else:
-                    logger.error(
-                        f"REPL execution seems to have finished (or was attempted), but expected file '{generated_filename}' was not found.")
-                    return {
-                        "type": "error",
-                        "output": f"Code execution and REPL step finished, but the expected output file "
-                                  f"'{generated_filename_path.name}' was not found in '{generated_filename_path.parent}'. "
-                                  f"Check REPL Output below (if available) and logs for errors during execution."
-                                  f"\n\nREPL Output:\n{repl_output if repl_output is not None else '(Not Available)'}",
-                        "generated_filename": generated_filename
-                    }
+                return {
+                    "type": "error",
+                    "output": (
+                        f"Code execution finished, but the expected output file "
+                        f"'{generated_filename_path.name}' was not found in '{generated_filename_path.parent}'.\n\n"
+                        f"Execution Output:\n{repl_output}"
+                    ),
+                    "generated_filename": validated_code_gen.output_filename,
+                }
 
             else:
-                logger.error(f"Unknown generation method specified: {generation_method}")
-                return {"type": "error", "output": f"Internal error: Unknown generation method '{generation_method}'."}
+                return {
+                    "type": "error",
+                    "output": f"Internal error: Unknown generation method '{generation_method}'.",
+                }
 
         except Exception as e:
             logger.error(f"An unexpected error occurred during PresentationAgent execution: {e}", exc_info=True)
             return {"type": "error", "output": f"An unexpected error occurred in the agent: {e}"}
 
+    def _run_via_agent_runnable(
+        self,
+        user_input: str,
+        style: str,
+        template_name: str,
+        template_data: Dict[str, Any],
+        generation_method: str,
+        config: Optional[RunnableConfig] = None,
+    ) -> Dict[str, Any]:
+        """Handles execution when an external/mocked agent_runnable is attached."""
+        agent_input_message = (
+            f"Generate a presentation.\nChosen Generation Method: {generation_method}\n"
+            f"Presentation Style: {style}\nVisual Template Name: {template_name}\n"
+            f"Template Data: {json.dumps(template_data)}\nContent:\n{user_input}"
+        )
+        effective_config = config or RunnableConfig()
+        agent_response = self.agent_runnable.invoke(
+            {"input": agent_input_message, "chat_history": []}, config=effective_config
+        )
+
+        intermediate_steps = (
+            agent_response.get("intermediate_steps", [])
+            if isinstance(agent_response, dict)
+            else []
+        )
+        final_output_content = (
+            agent_response.get("output")
+            if isinstance(agent_response, dict)
+            else str(agent_response)
+        )
+
+        if generation_method == "json":
+            cleaned_json_string = self._clean_json_output(final_output_content or "")
+            try:
+                parsed_json = json.loads(cleaned_json_string)
+                if not isinstance(parsed_json, dict) or "slides" not in parsed_json:
+                    raise ValueError("JSON output from agent is missing 'slides' key or is not a dictionary.")
+                return {"type": "json", "output": cleaned_json_string}
+            except (json.JSONDecodeError, ValueError) as json_err:
+                return {"type": "error", "output": f"Agent did not return valid JSON structure: {json_err}"}
+
+        if generation_method == "code":
+            if not intermediate_steps:
+                return {
+                    "type": "error",
+                    "output": f"Agent execution incomplete (no intermediate steps found). Final output: {final_output_content}",
+                }
+
+            code_generator_output_json = None
+            code_quality_output_json = None
+            repl_output = None
+
+            for step in intermediate_steps:
+                if len(step) == 2 and hasattr(step[0], "tool"):
+                    if step[0].tool == "Code_Generator":
+                        code_generator_output_json = step[1]
+                    elif step[0].tool == "Code_Quality_Checker":
+                        code_quality_output_json = step[1]
+                    elif step[0].tool == "PythonREPLTool":
+                        repl_output = step[1]
+
+            if not code_generator_output_json:
+                return {"type": "error", "output": "Agent failed to use the Code_Generator tool."}
+
+            code_gen_data = json.loads(code_generator_output_json)
+            GeneratedCodeOutput(**code_gen_data)
+            generated_filename = code_gen_data.get("output_filename")
+
+            if not code_quality_output_json:
+                return {"type": "error", "output": "Agent failed to use the Code_Quality_Checker tool."}
+
+            quality_check_data = json.loads(code_quality_output_json)
+            CodeQualityAnalysisOutput(**quality_check_data)
+
+            if not quality_check_data.get("is_safe"):
+                return {
+                    "type": "error",
+                    "output": (
+                        f"Generated code deemed unsafe or irrelevant by Code Quality Check.\n"
+                        f"Assessment: {quality_check_data.get('assessment', 'N/A')}\n"
+                        f"Warnings: {'; '.join(quality_check_data.get('warnings', []))}"
+                    ),
+                }
+
+            generated_filename_path = Path(generated_filename)
+            if generated_filename_path.exists():
+                return {
+                    "type": "code_execution",
+                    "output": repl_output if repl_output is not None else (final_output_content or ""),
+                    "generated_filename": str(generated_filename_path.absolute()),
+                }
+            return {
+                "type": "error",
+                "output": (
+                    f"Code execution and REPL step finished, but the expected output file "
+                    f"'{generated_filename_path.name}' was not found in '{generated_filename_path.parent}'."
+                ),
+                "generated_filename": generated_filename,
+            }
+
+        return {"type": "error", "output": f"Unknown generation method: {generation_method}"}
+
     def _clean_json_output(self, raw_output: str) -> str:
         """Cleans potential markdown code fences from JSON output."""
         if not isinstance(raw_output, str):
-            logger.warning(f"Received non-string output to clean: {type(raw_output)}. Returning empty string.")
             return ""
         cleaned = raw_output.strip()
         if cleaned.startswith("```json"):
@@ -332,11 +304,10 @@ class PresentationAgent:
             if cleaned.endswith("```"):
                 cleaned = cleaned[:-3].strip()
 
-        first_brace = cleaned.find('{')
-        last_brace = cleaned.rfind('}')
-
+        first_brace = cleaned.find("{")
+        last_brace = cleaned.rfind("}")
         if first_brace != -1 and last_brace != -1 and last_brace > first_brace:
-            potential_json = cleaned[first_brace:last_brace + 1]
+            potential_json = cleaned[first_brace : last_brace + 1]
             try:
                 json.loads(potential_json)
                 logger.debug("Successfully extracted JSON content using brace finding.")
@@ -344,66 +315,52 @@ class PresentationAgent:
             except json.JSONDecodeError:
                 logger.warning("Brace finding resulted in invalid JSON. Returning original cleaned string.")
                 return cleaned
-        else:
-            logger.debug("Could not find surrounding braces, returning original cleaned string.")
-            return cleaned
+        return cleaned
 
 
 def get_llm_instance(llm_provider: str, api_key: str) -> BaseChatModel:
     """Helper function to get LLM instance using environment variables or defaults."""
-    try:
-        temperature = float(os.getenv('LLM_TEMPERATURE', DEFAULT_LLM_TEMPERATURE))
-        max_tokens = int(os.getenv('LLM_MAX_TOKENS', DEFAULT_LLM_MAX_TOKENS))
+    temperature = float(os.getenv("LLM_TEMPERATURE", DEFAULT_LLM_TEMPERATURE))
+    max_tokens = int(os.getenv("LLM_MAX_TOKENS", DEFAULT_LLM_MAX_TOKENS))
 
-        if llm_provider.lower() == "openai":
-            model_name = os.getenv('OPENAI_MODEL', DEFAULT_OPENAI_MODEL)
-            logger.info(f"Initializing OpenAI LLM: model={model_name}, temp={temperature}, max_tokens={max_tokens}")
-            return ChatOpenAI(
-                api_key=api_key,
-                model=model_name,
-                temperature=temperature,
-                max_tokens=max_tokens
-            )
-        elif llm_provider.lower() == "anthropic":
-            model_name = os.getenv('ANTHROPIC_MODEL', DEFAULT_ANTHROPIC_MODEL)
-            logger.info(f"Initializing Anthropic LLM: model={model_name}, temp={temperature}, max_tokens={max_tokens}")
-            return ChatAnthropic(
-                api_key=api_key,
-                model_name=model_name,
-                temperature=temperature,
-                max_tokens=max_tokens
-            )
-        else:
-            raise ValueError(f"Unsupported LLM provider: {llm_provider}")
-    except Exception as e:
-        logger.error(f"Failed to initialize LLM for provider {llm_provider}: {e}")
-        raise
+    if llm_provider.lower() == "openai":
+        model_name = os.getenv("OPENAI_MODEL", DEFAULT_OPENAI_MODEL)
+        return ChatOpenAI(
+            api_key=api_key,
+            model=model_name,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+    elif llm_provider.lower() == "anthropic":
+        model_name = os.getenv("ANTHROPIC_MODEL", DEFAULT_ANTHROPIC_MODEL)
+        return ChatAnthropic(
+            api_key=api_key,
+            model_name=model_name,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+    else:
+        raise ValueError(f"Unsupported LLM provider: {llm_provider}")
 
 
-def create_agent(llm_provider: str,
-                 api_key: str,
-                 loaded_docs: Optional[List[Document]] = None,
-                 template_data: Optional[Dict] = None,
-                 ) -> PresentationAgent:
-    """
-    Creates the PresentationAgent with configured LLM and tools, optionally setting up RAG.
-
-    Args:
-        llm_provider (str): "OpenAI" or "Anthropic".
-        api_key (str): The API key for the chosen provider.
-        loaded_docs (Optional[List[Document]]): Pre-loaded documents for RAG context.
-        template_data (Optional[Dict]): Default template data (used by Code_Generator).
-
-    Returns:
-        PresentationAgent: The initialized agent instance.
-    """
+def create_agent(
+    llm_provider: str,
+    api_key: str,
+    loaded_docs: Optional[List[Document]] = None,
+    template_data: Optional[Dict] = None,
+    retriever: Optional[BaseRetriever] = None,
+) -> PresentationAgent:
+    """Creates the PresentationAgent with configured LLM, tools, and optional RAG retriever."""
     llm = get_llm_instance(llm_provider, api_key)
 
-    retriever: Optional[BaseRetriever] = None
-    if loaded_docs:
+    if retriever is None and loaded_docs:
         try:
-            logger.info(f"Initializing RAG system with {len(loaded_docs)} documents.")
-            rag_system = EnhancedRAG(docs=loaded_docs, cache_name="pptx_docs_context")
+            openai_key = api_key if llm_provider.lower() == "openai" else os.getenv("OPENAI_API_KEY")
+            rag_system = EnhancedRAG(
+                docs=loaded_docs,
+                cache_name="pptx_docs_context",
+                openai_api_key=openai_key,
+            )
             retriever = rag_system.get_retriever(k=5)
             if retriever:
                 logger.info("RAG retriever successfully created.")
@@ -415,91 +372,77 @@ def create_agent(llm_provider: str,
     else:
         logger.info("No documents provided for RAG context.")
 
-    tools: List[BaseTool] = []
-
-    # Tool 1: Bullet Points Generator (JSON Structure Path)
-    bullet_points_tool_func: Callable[[Dict], str] = partial(
-        run_bullet_points_tool_with_llm, llm=llm, retriever=retriever
-    )
-    bullet_points_tool_description = (create_bullet_points_tool.__doc__ or
-                                      "Generates a detailed, structured JSON presentation outline.")
-    tools.append(BaseTool.from_function(
-        func=bullet_points_tool_func,
-        name="Bullet_Points_Generator",
-        description=bullet_points_tool_description.strip(),
-        args_schema=BulletPointInput
-    ))
-
-    # Tool 2: Code Generator (Code Path - Step 1)
-    code_generation_tool_func: Callable[[Dict], str] = partial(
-        run_code_generation_tool_with_llm, llm=llm, retriever=retriever, template_data=template_data or {}
-    )
-    code_generation_tool_description = (create_code_generation_tool.__doc__ or
-                                        "Generates runnable python-pptx code to create a presentation file.")
-    tools.append(BaseTool.from_function(
-        func=code_generation_tool_func,
-        name="Code_Generator",
-        description=code_generation_tool_description.strip(),
-        args_schema=GenerateCodeInput
-    ))
-
-    # Tool 3: Code Quality Checker (Code Path - Step 2)
-    code_quality_tool_func: Callable[[Dict], str] = partial(
-        run_code_quality_check_tool_with_llm, llm=llm
-    )
-    code_quality_tool_description = (create_code_quality_check_tool.__doc__ or
-                                     "Analyzes generated python-pptx code for safety and relevance.")
-    tools.append(BaseTool.from_function(
-        func=code_quality_tool_func,
-        name="Code_Quality_Checker",
-        description=code_quality_tool_description.strip(),
-        args_schema=CodeQualityCheckInput
-    ))
-
-    # Tool 4: Python REPL (Code Path - Step 3)
-    try:
-        python_repl_tool = PythonREPLTool()
-        python_repl_tool.description = (
-            "Executes Python code. Use this ONLY to run the code generated by Code_Generator and *after* it has been verified by Code_Quality_Checker."
-            "Input MUST be a valid Python code string.")
-        tools.append(python_repl_tool)
-    except Exception as repl_err:
-        logger.error(f"Failed to initialize PythonREPLTool: {repl_err}. Code generation path will likely fail.",
-                     exc_info=True)
-
-    # Tool 5: Presentation Quality Checker (JSON Path - Optional)
-    quality_check_tool_func: Callable[[Dict], str] = partial(
-        run_quality_check_tool_with_llm, llm=llm
-    )
-    quality_check_tool_description = (create_quality_check_tool.__doc__ or
-                                      "Analyzes a presentation structure JSON for quality.")
-    tools.append(BaseTool.from_function(
-        func=quality_check_tool_func,
-        name="Presentation_Quality_Checker",
-        description=quality_check_tool_description.strip(),
-        args_schema=QualityCheckInput
-    ))
+    tools: List[BaseTool] = [
+        BaseTool.from_function(
+            func=partial(run_bullet_points_tool_with_llm, llm=llm, retriever=retriever),
+            name="Bullet_Points_Generator",
+            description=(
+                create_bullet_points_tool.__doc__
+                or "Generates a detailed, structured JSON presentation outline."
+            ).strip(),
+            args_schema=BulletPointInput,
+        ),
+        BaseTool.from_function(
+            func=partial(
+                run_code_generation_tool_with_llm,
+                llm=llm,
+                retriever=retriever,
+                template_data=template_data or {},
+            ),
+            name="Code_Generator",
+            description=(
+                create_code_generation_tool.__doc__
+                or "Generates runnable python-pptx code to create a presentation file."
+            ).strip(),
+            args_schema=GenerateCodeInput,
+        ),
+        BaseTool.from_function(
+            func=partial(run_code_quality_check_tool_with_llm, llm=llm),
+            name="Code_Quality_Checker",
+            description=(
+                create_code_quality_check_tool.__doc__
+                or "Analyzes generated python-pptx code for safety and relevance."
+            ).strip(),
+            args_schema=CodeQualityCheckInput,
+        ),
+        BaseTool.from_function(
+            func=partial(run_quality_check_tool_with_llm, llm=llm),
+            name="Presentation_Quality_Checker",
+            description=(
+                create_quality_check_tool.__doc__
+                or "Analyzes a presentation structure JSON for quality."
+            ).strip(),
+            args_schema=QualityCheckInput,
+        ),
+    ]
 
     return PresentationAgent(llm=llm, tools=tools, retriever=retriever)
 
 
-def run_code_generation_tool_with_llm(tool_input: Dict[str, Any], llm: BaseChatModel,
-                                      retriever: Optional[BaseRetriever], template_data: Dict) -> str:
+def run_code_generation_tool_with_llm(
+    tool_input: Dict[str, Any],
+    llm: BaseChatModel,
+    retriever: Optional[BaseRetriever],
+    template_data: Dict,
+) -> str:
     """Helper to run the code generation logic with injected dependencies."""
     try:
-        input_model = GenerateCodeInput(**tool_input, template_data=template_data)
+        merged_input = {**tool_input, "template_data": tool_input.get("template_data") or template_data}
+        input_model = GenerateCodeInput(**merged_input)
         return create_code_generation_tool(input_model, llm, retriever)
     except Exception as e:
         logger.error(f"Error running Code_Generator tool logic: {e}", exc_info=True)
-        error_output = GeneratedCodeOutput(
+        return GeneratedCodeOutput(
             python_code=f"# Error generating code: {e}",
-            output_filename="error.pptx"
-        ).json(indent=2)
-        return error_output
+            output_filename="error.pptx",
+        ).model_dump_json(indent=2)
 
 
-def run_bullet_points_tool_with_llm(tool_input: Dict[str, Any], llm: BaseChatModel,
-                                    retriever: Optional[BaseRetriever]) -> str:
+def run_bullet_points_tool_with_llm(
+    tool_input: Dict[str, Any],
+    llm: BaseChatModel,
+    retriever: Optional[BaseRetriever],
+) -> str:
     """Helper to run the bullet points logic with injected LLM and Retriever."""
     try:
         validated_input = BulletPointInput(**tool_input)
@@ -513,8 +456,6 @@ def run_quality_check_tool_with_llm(tool_input: Dict[str, Any], llm: BaseChatMod
     """Helper to run the quality check logic with injected LLM."""
     try:
         validated_input = QualityCheckInput(**tool_input)
-        if not isinstance(validated_input.presentation_structure, dict):
-            return "Error executing Presentation_Quality_Checker: Input 'presentation_structure' must be a valid JSON object/dictionary."
         return create_quality_check_tool(validated_input, llm)
     except Exception as e:
         logger.error(f"Error running Presentation_Quality_Checker tool logic: {e}", exc_info=True)
@@ -528,9 +469,8 @@ def run_code_quality_check_tool_with_llm(tool_input: Dict[str, Any], llm: BaseCh
         return create_code_quality_check_tool(validated_input, llm)
     except Exception as e:
         logger.error(f"Error running Code_Quality_Checker tool logic: {e}", exc_info=True)
-        error_output = CodeQualityAnalysisOutput(
+        return CodeQualityAnalysisOutput(
             is_safe=False,
             warnings=[f"Failed to run code quality analysis tool: {e}"],
-            assessment="Error during tool execution."
-        ).json(indent=2)
-        return error_output
+            assessment="Error during tool execution.",
+        ).model_dump_json(indent=2)

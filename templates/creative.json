@@ -5,11 +5,20 @@
         "background": "#FDFEFE",
         "text": "#5D6D7E",
         "accent1": "#FF6B6B",
-        "accent2": "#4ECDC4"
+        "accent2": "#4ECDC4",
+        "text_light": "#95A5A6"
     },
     "font": {
-        "heading": "Helvetica Neue",
-        "body": "Helvetica"
+        "heading": {
+            "name": "Helvetica Neue",
+            "size": 34,
+            "bold": true
+        },
+        "body": {
+            "name": "Helvetica",
+            "size": 14,
+            "bold": false
+        }
     },
     "layouts": {
         "title_slide": 0,
