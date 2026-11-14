@@ -1,0 +1,23 @@
+# docker compose up ui      -> web UI on http://localhost:7860
+# docker compose up mcp     -> MCP (Streamable HTTP) on http://localhost:8000/mcp
+services:
+  ui:
+    build: .
+    image: txt2pptx:latest
+    command: ["ui"]
+    ports: ["127.0.0.1:7860:7860"]
+    env_file: [{ path: .env, required: false }]
+    volumes: [txt2pptx-data:/data]
+    restart: unless-stopped
+
+  mcp:
+    image: txt2pptx:latest
+    build: .
+    command: ["mcp", "--transport", "streamable-http"]
+    ports: ["127.0.0.1:8000:8000"]
+    env_file: [{ path: .env, required: false }]
+    volumes: [txt2pptx-data:/data]
+    restart: unless-stopped
+
+volumes:
+  txt2pptx-data:

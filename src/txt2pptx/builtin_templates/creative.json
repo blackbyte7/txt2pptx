@@ -1,0 +1,22 @@
+{
+  "name": "creative",
+  "description": "Bold and vibrant: coral and teal accents for workshops and pitches.",
+  "aspect_ratio": "16:9",
+  "colors": {
+    "background": "#FFFDF8",
+    "text": "#3D4451",
+    "title": "#E8505B",
+    "accent1": "#FF6B6B",
+    "accent2": "#4ECDC4",
+    "accent3": "#FFD166",
+    "accent4": "#6C5CE7",
+    "text_light": "#8D99AE",
+    "surface": "#FFFFFF",
+    "surface_alt": "#FFF1E6",
+    "on_accent": "#FFFFFF"
+  },
+  "font": {
+    "heading": {"name": "Segoe UI Semibold", "size": 38, "bold": true},
+    "body": {"name": "Segoe UI", "size": 18}
+  }
+}

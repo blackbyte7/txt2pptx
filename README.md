@@ -1,180 +1,199 @@
-# txt2pptx: Text-to-PowerPoint Presentation Generator
+# txt2pptx
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Python Version](https://img.shields.io/badge/Python-3.9+-blue.svg)](https://www.python.org/downloads/)
-[![Langchain](https://img.shields.io/badge/Langchain-latest-orange.svg)](https://python.langchain.com)
+[![CI](https://github.com/blackbyte7/txt2pptx/actions/workflows/ci.yml/badge.svg)](https://github.com/blackbyte7/txt2pptx/actions/workflows/ci.yml)
+[![Python](https://img.shields.io/badge/python-3.11%E2%80%933.14-blue.svg)](pyproject.toml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![MCP](https://img.shields.io/badge/MCP-server-8A2BE2.svg)](#mcp-server)
 
-## Overview
+Turn text and documents into polished, editable PowerPoint decks. Use it from a **web UI**, the
+**command line**, or any AI assistant through its **MCP server**.
 
-`txt2pptx` is a Python-based project leveraging the power of Langchain and Large Language Models (LLMs) to automatically generate PowerPoint presentations from user-provided text or PDF content.  Simply input your text, choose a presentation style, and `txt2pptx` will create a professional-looking presentation for you, complete with structured slides, bullet points, and style customizations.
-
-This project aims to streamline the presentation creation process, saving you time and effort by automating the conversion of textual information into visually engaging slides. It's ideal for quickly generating presentations for meetings, lectures, reports, and more.
+An LLM (OpenAI or Anthropic) structures your content into a *slide outline*: titles, bullets, tables,
+charts, image placeholders, and speaker notes. A deterministic renderer then turns that outline into a
+native `.pptx`, with real bullets, native charts, styled tables, 16:9 geometry, and template colors and fonts.
+You can export the result to PDF, PNG slide images, or an HTML handout.
 
 ## Features
 
-- **Text and PDF Input:** Accepts both plain text and PDF files as input for generating presentations.
-- **Style Customization:** Offers various presentation styles (e.g., Professional, Creative) to tailor the look and feel of your slides.
-- **LLM Powered Generation:** Utilizes Langchain and LLMs (OpenAI or Anthropic) to intelligently structure content into logical slides and bullet points.
-- **Automated Presentation Creation:** Generates `.pptx` files programmatically using the `python-pptx` library.
-- **Documentation Retrieval (RAG):**  Leverages Retrieval-Augmented Generation (RAG) using `python-pptx` documentation to generate accurate and relevant PowerPoint code.
-- **Content Analysis:** Provides optional content analysis and suggestions to improve the clarity and impact of your presentation.
-- **Export Options:** Supports exporting presentations to various formats including PDF, HTML, and individual image slides.
-- **Template Customization:** Allows for customization of presentation templates, including colors, fonts, and transitions.
-- **Gradio User Interface:**  Includes a user-friendly Gradio web interface for easy interaction and presentation generation.
-- **Logging:** Integrated logging for monitoring application behavior and debugging.
+- **Inputs:** `.txt`, `.md`, `.pdf`, `.docx`, `.pptx`, `.html`, or pasted text
+- **Native PowerPoint output.** Charts are editable chart objects (bar, column, stacked, line, area, pie,
+  doughnut), tables are real tables, and speaker notes and document properties are filled in
+- **Templates:** `professional`, `creative`, `minimal`, `dark`, or your own JSON templates. Any value can be
+  overridden per request
+- **Edit, then rebuild.** Tweak the generated outline JSON and re-render without another LLM call
+- **Quality checks:** heuristic content analysis, plus an optional AI review
+- **MCP server.** The assistant writes the outline itself, so **no API key is needed** on the server
+- **Exports:** PDF via LibreOffice or Microsoft PowerPoint, PNG via pypdfium2 (no Poppler), and HTML
+- **Production-minded:** typed config, stderr logging, upload and input limits, export retention,
+  authentication for the UI, a non-root Docker image, CI
 
-## Installation
+## Quick start
 
-1. **Clone the repository:**
+Requires Python 3.11+. [uv](https://docs.astral.sh/uv/) is recommended.
 
-   ```bash
-   git clone <repository_url>
-   cd txt2pptx
-   ```
-
-2. **Set up a virtual environment (recommended):**
-
-   ```bash
-   python -m venv venv
-   source venv/bin/activate  # On Linux/macOS
-   venv\Scripts\activate  # On Windows
-   ```
-
-3. **Install dependencies:**
-
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-4. **Configure Environment Variables:**
-
-   - Create a `.env` file in the project root directory.
-   - Add your OpenAI or Anthropic API key to the `.env` file:
-
-     ```env
-     OPENAI_API_KEY='your_secret_key'
-     # Or for Anthropic
-     # ANTHROPIC_API_KEY='your_anthropic_api_key'
-     ```
-     **Note:** If you plan to use Anthropic, ensure you select "Anthropic" in the Gradio UI and have the necessary API key configured.
-
-5. **Install system-level dependencies (for PDF and advanced export features):**
-
-   - **For PDF conversion on Unix-based systems (Linux, macOS):**
-     ```bash
-     sudo apt-get install unoconv libreoffice  # Debian/Ubuntu based
-     # or
-     brew install unoconv libreoffice         # macOS using Homebrew
-     # or use your system's package manager
-     ```
-     Ensure `unoconv` and `libreoffice` are installed and accessible in your system's PATH.
-   - **For PDF to image conversion:**
-     Install `poppler` (required by `pdf2image`). Instructions vary by OS; for Ubuntu:
-     ```bash
-     sudo apt-get install poppler-utils
-     ```
-     Refer to the `pdf2image` documentation for installation instructions on other operating systems.
-
-## Usage
-
-1. **Run the Gradio UI:**
-
-   ```bash
-   python run.py
-   ```
-
-2. **Access the UI in your browser:**
-
-   Open your web browser and go to the address displayed in the console (usually `http://127.0.0.1:7860`).
-
-3. **Using the Web Interface:**
-
-   - **Input File:** Upload a `.txt` or `.pdf` file containing the content for your presentation.
-   - **Presentation Style:** Choose a style from the dropdown menu (Default, Professional, Creative, Playful).
-   - **LLM Provider:** Select your preferred LLM provider (OpenAI or Anthropic).
-   - **API Key:** Enter your API key if you don't want to use the environment variable or want to use a different key.
-   - **Presentation Template:** Choose a base template to start with (professional, creative).
-   - **Advanced Options (Tab):**
-     - **Export Formats:** Select the formats you want to export your presentation to (PDF, HTML, Images).
-     - **Analyze Content:** Check this box to enable content analysis and get suggestions for improvement.
-     - **Template Customization:**  Optionally customize the presentation template by providing a JSON object with modifications to colors, fonts, and transitions.
-   - **Generate Presentation:** Click the "Generate Presentation" button to start the presentation creation process.
-
-4. **Download Generated Presentation(s):**
-
-   Once the process is complete, the generated `.pptx` file (and any exported files) will be available for download in the "Generated Presentation(s)" section of the UI.
-
-## Directory Structure
-
-```
-txt2pptx/
-├── app/
-│   ├── agents.py         # Defines the presentation agent and orchestration logic.
-│   ├── analyzers.py      # Implements content analysis for presentation improvement.
-│   ├── exporters.py      # Handles exporting presentations to different formats (PDF, HTML, images).
-│   ├── rag.py            # Implements Retrieval-Augmented Generation for documentation lookup.
-│   ├── tools.py          # Defines custom Langchain tools for presentation generation tasks.
-│   ├── utils.py          # Utility functions for file loading, presentation generation, etc.
-├── environment.env       # Environment variable configuration file.
-├── log_config/
-│   └── logging_config.py # Logging setup and configuration.
-├── requirements.txt      # Project dependencies.
-├── run.py              # Main script to launch the Gradio UI.
-├── templates/
-│   ├── templates.py      # Manages presentation templates and customization.
-│   └── professional.json  # Example template definition (you might have more).
-├── view/
-│   └── gradio_ui.py     # Gradio user interface definition.
-└── README.md             # Project README file (this document).
+```bash
+git clone https://github.com/blackbyte7/txt2pptx.git
+cd txt2pptx
+uv sync --all-extras          # or: pip install -e ".[all]"
+cp .env.example .env          # add OPENAI_API_KEY and/or ANTHROPIC_API_KEY
+uv run txt2pptx ui            # http://127.0.0.1:7860
 ```
 
-## Environment Variables
+Extras: `ui` (Gradio web UI), `mcp` (MCP server), `all` (both). The core library and CLI need neither.
 
-- `OPENAI_API_KEY`: Your OpenAI API key. Required if using OpenAI models.
-- `ANTHROPIC_API_KEY`: Your Anthropic API key. Required if using Anthropic models.
+For **PDF/PNG export**, install [LibreOffice](https://www.libreoffice.org/) (`soffice` on your PATH), or have
+Microsoft PowerPoint installed on Windows. HTML export always works.
 
-   **Note:** It is highly recommended to use environment variables to securely manage your API keys instead of hardcoding them in the code.
+## Command line
 
-## Dependencies
+```bash
+txt2pptx generate report.pdf -t dark -e pdf --max-slides 10     # LLM: document -> deck (+ PDF)
+cat notes.md | txt2pptx generate - -p anthropic --review          # from stdin, with AI review
+txt2pptx generate report.docx --save-outline outline.json         # keep the outline for later edits
+txt2pptx build outline.json -t minimal -e html                    # outline -> deck, no LLM
+txt2pptx templates                                                # list templates
+txt2pptx ui --host 0.0.0.0 --port 7860                            # web UI
+txt2pptx mcp                                                      # MCP server (stdio)
+```
 
-- `langchain>=0.2.17`
-- `langchain-community`
-- `langchain-openai`
-- `langchain-anthropic`
-- `gradio~=5.11.0`
-- `pdf2image==1.16.3`
-- `python-pptx==0.6.21`
-- `pydantic>=2.10.0`
-- `comtypes>=1.1.14; platform_system == "Windows"`
-- `pywin32>=305; platform_system == "Windows"`
-- `unoconv` (for Unix-based PDF conversion)
-- `python-dotenv~=1.0.1`
-- `langgraph~=0.3.15`
-- `pypdf`
+Add `--json` to `generate` or `build` for machine-readable output. `python run.py` still starts the UI for
+backward compatibility.
 
-   See `requirements.txt` for the full list of dependencies and specific versions.
+## MCP server
 
-## Contributing
+The MCP server exposes txt2pptx to Claude Desktop, Claude Code, IDE assistants, and any other MCP client.
 
-Contributions to `txt2pptx` are welcome! If you have ideas for improvements, new features, or bug fixes, please feel free to:
+| Tool | What it does |
+|---|---|
+| `create_presentation` | Renders a `PresentationOutline` (written by the assistant) to `.pptx`, with optional PDF/PNG/HTML exports. No LLM call on the server. |
+| `list_templates` | Lists the visual templates with their colors |
+| `analyze_outline` | Runs heuristic checks on an outline before rendering |
+| `export_presentation` | Exports a previously generated deck |
+| `generate_presentation` | Server-side LLM: raw text in, deck out. **Only registered when the server has an API key.** |
 
-1. Fork the repository.
-2. Create a new branch for your feature or fix.
-3. Make your changes and commit them.
-4. Submit a pull request.
+Resources: `txt2pptx://schema/outline` (JSON schema), `txt2pptx://templates/{name}`, and
+`txt2pptx://exports/{filename}` (the `.pptx` bytes). Prompt: `create_deck`.
+
+**Claude Desktop / Claude Code (stdio).** Add to your MCP config (`claude_desktop_config.json`, or `.mcp.json` for Claude Code):
+
+```json
+{
+  "mcpServers": {
+    "txt2pptx": {
+      "command": "uvx",
+      "args": ["--from", "txt2pptx[mcp] @ git+https://github.com/blackbyte7/txt2pptx", "txt2pptx-mcp"]
+    }
+  }
+}
+```
+
+From a local checkout, use `"command": "uv", "args": ["--directory", "/path/to/txt2pptx", "run", "txt2pptx-mcp"]`.
+For Claude Code you can also run `claude mcp add txt2pptx -- uv --directory /path/to/txt2pptx run txt2pptx-mcp`.
+
+Decks are written to `~/txt2pptx/exports` unless you set `TXT2PPTX_HOME` or `TXT2PPTX_OUTPUT_DIR`.
+
+**Remote / shared (Streamable HTTP):**
+
+```bash
+txt2pptx-mcp --transport streamable-http --host 127.0.0.1 --port 8000   # endpoint: http://127.0.0.1:8000/mcp
+```
+
+DNS-rebinding protection is always on. When binding to a public interface, list your public host names in
+`TXT2PPTX_MCP_ALLOWED_HOSTS` and put the server behind a TLS-terminating, authenticating reverse proxy.
+
+## Docker
+
+```bash
+docker build -t txt2pptx .
+docker run --rm -p 127.0.0.1:7860:7860 --env-file .env -v txt2pptx-data:/data txt2pptx           # web UI
+docker run --rm -p 127.0.0.1:8000:8000 -v txt2pptx-data:/data txt2pptx mcp --transport streamable-http
+docker compose up ui        # or: docker compose up mcp
+```
+
+The image runs as a non-root user and includes LibreOffice and Calibri-compatible fonts for PDF/PNG export.
+Generated files live in the `/data` volume.
+
+## Configuration
+
+All settings are environment variables, optionally in a `.env` file. See [`.env.example`](.env.example) for
+the full list. The most important ones:
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` | – | LLM access (not needed for `build` or MCP `create_presentation`) |
+| `OPENAI_MODEL` / `ANTHROPIC_MODEL` | `gpt-6-astra` / `claude-sonnet-5-5` | Model names |
+| `TXT2PPTX_HOME` | `.` (MCP: `~/txt2pptx`) | Base for relative paths (`exports/`, `cache/`, `logs/`) |
+| `TXT2PPTX_SERVER_NAME` | `127.0.0.1` | Web UI bind address. Set `TXT2PPTX_UI_AUTH=user:pass` when exposing it |
+| `TXT2PPTX_EXPORT_RETENTION_HOURS` | `72` | Deletes old generated files automatically (`0` = keep forever) |
+| `TXT2PPTX_ENABLE_CODE_EXECUTION` | `false` | Experimental mode that executes LLM-written python-pptx code |
+| `DOCS_PATH` | `data/python-pptx-documentation.pdf` | Optional reference docs for retrieval (needs an OpenAI key for embeddings) |
+
+### Templates
+
+Templates are JSON files: a name, description, `aspect_ratio` (`16:9`/`4:3`), `colors`
+(`background`, `text`, `title`, `accent1`–`accent4`, `text_light`, `surface`, `surface_alt`, `on_accent`),
+and `font.heading` / `font.body` (`name`, `size`, `bold`, `italic`). Put your own in a directory and point
+`TXT2PPTX_TEMPLATES_DIR` at it. A file whose name matches a built-in template overrides that template.
+See [`src/txt2pptx/builtin_templates`](src/txt2pptx/builtin_templates) for examples.
+
+### Outline format
+
+The renderer accepts a `PresentationOutline`. Print its JSON schema with:
+`python -c "from txt2pptx.schemas import PresentationOutline as P; import json; print(json.dumps(P.model_json_schema(), indent=2))"`
+
+```json
+{
+  "metadata": {"title": "Q1 Review"},
+  "slides": [
+    {"slide_type": "title", "title": "Q1 Review", "subtitle": "Sales & Operations"},
+    {"title": "Revenue grew 18%", "content_elements": [
+      {"element_type": "text", "bullet_points": ["EMEA led growth", "Churn down to 2.1%"]},
+      {"element_type": "chart", "chart_type": "column", "categories": ["Jan", "Feb", "Mar"],
+       "series": [{"name": "Revenue (k$)", "values": [120, 135, 142]}]}
+    ], "speaker_notes": "Mention the EMEA campaign."},
+    {"slide_type": "closing", "title": "Next steps", "content_elements": [
+      {"element_type": "text", "bullet_points": ["Hire 2 AEs", "Launch partner program"]}]}
+  ]
+}
+```
+
+## Security notes
+
+- The experimental **code-generation mode** runs LLM-written Python. It is **off by default**. When enabled,
+  the code must pass a strict AST allow-list (no file, network, or OS access, no dunder access), then runs in
+  an isolated interpreter (`-I`) in an empty temp directory, with a stripped environment and a timeout. That
+  is defense in depth, not a sandbox. Only enable it inside a container.
+- The web UI binds to localhost by default. Before exposing it, set `TXT2PPTX_UI_AUTH`, because the UI can spend the
+  server's API key.
+- MCP file access is limited to the output directory, and path traversal is rejected.
+
+## Development
+
+```bash
+uv sync --all-extras
+uv run pytest --cov          # tests (no API keys or network needed)
+uv run ruff check . && uv run ruff format --check .
+```
+
+Project layout:
+
+```
+src/txt2pptx/
+  config.py          typed settings (pydantic-settings)
+  schemas.py         PresentationOutline & friends (the LLM <-> renderer contract)
+  chains.py          LLM calls with native structured output
+  pptx_generator.py  deterministic outline -> .pptx renderer
+  pipeline.py        PresentationService used by UI, CLI and MCP
+  exporters.py       PDF / PNG / HTML export
+  loaders.py         text extraction for input documents
+  rag.py             optional retrieval over reference docs
+  sandbox.py         validation + isolated execution for code mode
+  templates.py       template loading/customization (+ builtin_templates/*.json)
+  ui.py · cli.py · mcp_server.py
+```
+
+See [docs/AUDIT_REPORT.md](docs/AUDIT_REPORT.md) for the 2026 audit and modernization notes.
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## Acknowledgements
-
-- Built using [Langchain](https://python.langchain.com/) - for powerful language model orchestration.
-- Utilizes [OpenAI](https://openai.com/) and [Anthropic](https://www.anthropic.com/) models - for natural language processing and content generation.
-- PowerPoint generation powered by [python-pptx](https://python-pptx.readthedocs.io/en/latest/) - for programmatic PowerPoint manipulation.
-- Gradio UI created with [Gradio](https://gradio.app/) - for user-friendly web interface.
-- PDF handling with [pdf2image](https://github.com/Belval/pdf2image) and system tools.
-
----
-
-**Note:** This project utilizes external LLM APIs (OpenAI/Anthropic). API key configuration and responsible usage are required.
+[MIT](LICENSE)

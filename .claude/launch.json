@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "txt2pptx-ui",
+      "runtimeExecutable": ".venv/Scripts/txt2pptx.exe",
+      "runtimeArgs": ["ui", "--port", "7861"],
+      "port": 7861
+    }
+  ]
+}

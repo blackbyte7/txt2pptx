@@ -1,16 +1,36 @@
+# Python
 __pycache__/
 *.py[cod]
-*$py.class
-.pytest_cache/
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
 
+# Tooling
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# IDEs
 .idea/
 .vscode/
+
+# Secrets - never commit real keys (use .env.example as the template)
 .env
+.env.*
+!.env.example
 environment.env
 
+# Runtime data
 logs/
 *.log
-app.log
 exports/
 cache/
-/data/python-pptx-documentation.pdf
+/data/*.pdf
+
+# Misc
+repomix-output*

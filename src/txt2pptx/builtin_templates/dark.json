@@ -1,0 +1,22 @@
+{
+  "name": "dark",
+  "description": "High-contrast dark theme for tech talks and screens.",
+  "aspect_ratio": "16:9",
+  "colors": {
+    "background": "#111827",
+    "text": "#E5E7EB",
+    "title": "#F9FAFB",
+    "accent1": "#38BDF8",
+    "accent2": "#A78BFA",
+    "accent3": "#34D399",
+    "accent4": "#FBBF24",
+    "text_light": "#9CA3AF",
+    "surface": "#1F2937",
+    "surface_alt": "#273449",
+    "on_accent": "#0B1220"
+  },
+  "font": {
+    "heading": {"name": "Segoe UI Semibold", "size": 36, "bold": true},
+    "body": {"name": "Segoe UI", "size": 18}
+  }
+}

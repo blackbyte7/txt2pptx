@@ -1,0 +1,22 @@
+{
+  "name": "minimal",
+  "description": "Quiet black-on-white typography with a single accent color.",
+  "aspect_ratio": "16:9",
+  "colors": {
+    "background": "#FFFFFF",
+    "text": "#222222",
+    "title": "#111111",
+    "accent1": "#111111",
+    "accent2": "#E63946",
+    "accent3": "#6C757D",
+    "accent4": "#ADB5BD",
+    "text_light": "#6C757D",
+    "surface": "#FFFFFF",
+    "surface_alt": "#F5F5F5",
+    "on_accent": "#FFFFFF"
+  },
+  "font": {
+    "heading": {"name": "Arial", "size": 34, "bold": true},
+    "body": {"name": "Arial", "size": 18}
+  }
+}

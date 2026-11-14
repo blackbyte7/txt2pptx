@@ -1,0 +1,9 @@
+# Only the build context the Dockerfile needs: pyproject.toml, uv.lock, README.md, LICENSE, src/
+*
+!pyproject.toml
+!uv.lock
+!README.md
+!LICENSE
+!src/
+**/__pycache__
+**/*.py[cod]

@@ -1,0 +1,22 @@
+{
+  "name": "professional",
+  "description": "Clean, modern corporate look with navy text and blue accents.",
+  "aspect_ratio": "16:9",
+  "colors": {
+    "background": "#FFFFFF",
+    "text": "#2C3E50",
+    "title": "#1F3A5F",
+    "accent1": "#2E86DE",
+    "accent2": "#1B4F72",
+    "accent3": "#48C9B0",
+    "accent4": "#F5B041",
+    "text_light": "#7F8C8D",
+    "surface": "#FFFFFF",
+    "surface_alt": "#EEF3F8",
+    "on_accent": "#FFFFFF"
+  },
+  "font": {
+    "heading": {"name": "Calibri", "size": 36, "bold": true},
+    "body": {"name": "Calibri", "size": 18}
+  }
+}
